@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# KAIROS Installer Launcher
+# ============================================================
+# Entry point for the installation wizard.
+# Launched automatically from the live environment on tty2,
+# or manually by the user.
+#
+# Usage:
+#   kairos-install            → interactive mode
+#   kairos-install --dry-run  → dry-run (no disk changes)
+#   kairos-install --help
+# ============================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALLER_PY=""
+
+# Search paths for the installer Python module
+search_paths=(
+    "${SCRIPT_DIR}/../installer/kairos_installer.py"
+    "/usr/libexec/kairos/installer.py"
+    "/usr/share/kairos/installer/kairos_installer.py"
+    "/mnt/kairos/installer.py"
+)
+
+for p in "${search_paths[@]}"; do
+    if [[ -f "$p" ]]; then
+        INSTALLER_PY="$p"
+        break
+    fi
+done
+
+if [[ -z "$INSTALLER_PY" ]]; then
+    echo "Error: KAIROS installer not found." >&2
+    echo "Expected locations:" >&2
+    for p in "${search_paths[@]}"; do
+        echo "  $p" >&2
+    done
+    exit 1
+fi
+
+# Ensure Python3 is available
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "Error: python3 is required to run the installer." >&2
+    exit 1
+fi
+
+exec python3 "$INSTALLER_PY" "$@"

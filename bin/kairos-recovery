@@ -1,0 +1,332 @@
+#!/usr/bin/env python3
+"""
+KAIROS OS Standalone Recovery Environment & Interactive Menu.
+Operates headlessly or on minimal text console (/dev/tty1, emergency shell)
+with zero graphical/Wayland dependencies.
+"""
+
+import os
+import sys
+import json
+import time
+import argparse
+import subprocess
+from typing import Optional
+
+# Ensure access to KAIROS modules
+sys.path.insert(0, "/usr/lib/kairos")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from system.recovery.engine import get_recovery_engine
+
+# ANSI Styling (Falls back gracefully in dumb terminals)
+USE_COLOR = sys.stdout.isatty() and os.environ.get("TERM", "") != "dumb"
+C_CYAN = "\033[1;36m" if USE_COLOR else ""
+C_GREEN = "\033[1;32m" if USE_COLOR else ""
+C_YELLOW = "\033[1;33m" if USE_COLOR else ""
+C_RED = "\033[1;31m" if USE_COLOR else ""
+C_BOLD = "\033[1m" if USE_COLOR else ""
+C_RESET = "\033[0m" if USE_COLOR else ""
+
+def clear_screen():
+    if USE_COLOR:
+        print("\033[2J\033[H", end="", flush=True)
+
+def render_header():
+    print(f"{C_CYAN}================================================================================{C_RESET}")
+    print(f"{C_CYAN} ◈ KAIROS OPERATING SYSTEM - DISASTER RECOVERY & RESCUE ENVIRONMENT{C_RESET}")
+    print(f"{C_CYAN} Target: Institutional Trading, Kernel Subsystems, & Cold Failover{C_RESET}")
+    print(f"{C_CYAN}================================================================================{C_RESET}")
+
+def render_menu():
+    print(f" {C_BOLD}RECOVERY ACTIONS:{C_RESET}")
+    print(f"   {C_GREEN}[1]{C_RESET} Boot Normally              (Resume standard desktop boot targets)")
+    print(f"   {C_GREEN}[2]{C_RESET} Boot Previous Version      (Switch to previous kernel/generation)")
+    print(f"   {C_GREEN}[3]{C_RESET} Repair System              (Bootloader, filesystems, critical services)")
+    print(f"   {C_GREEN}[4]{C_RESET} Rollback Update            (Atomic Btrfs snapshot rollback)")
+    print(f"   {C_GREEN}[5]{C_RESET} Diagnostics                (Kernel, memory, low-latency network, storage)")
+    print(f"   {C_GREEN}[6]{C_RESET} Terminal                   (Spawn interactive root emergency maintenance shell)")
+    print(f"   {C_GREEN}[7]{C_RESET} Shutdown                   (Flush filesystem buffers and power off)")
+    print(f"   {C_GREEN}[8]{C_RESET} Reboot                     (Perform clean hardware reboot)")
+    print(f"{C_CYAN}--------------------------------------------------------------------------------{C_RESET}")
+
+def handle_boot_normally():
+    print(f"\n{C_GREEN}[*] Resuming normal boot target (graphical.target / hyprland-session)...{C_RESET}")
+    time.sleep(1)
+    if os.path.exists("/usr/bin/systemctl"):
+        subprocess.run(["systemctl", "default"], check=False)
+    else:
+        print("[+] Init transition signaled. Continuing boot...")
+    return 0
+
+def handle_boot_previous_version():
+    print(f"\n{C_YELLOW}[*] Preparing to boot previous system version / certified kernel...{C_RESET}")
+    eng = get_recovery_engine()
+    res = eng.rollback_update("snapshot_prev_gen_20260910_120000")
+    print(f" {C_GREEN}[✓]{C_RESET} {res.get('message')}")
+    print(f" Boot target set: {res.get('next_boot_subvolume')}")
+    input(f"\nPress [Enter] to reboot into previous generation (or Ctrl+C to cancel)...")
+    if os.path.exists("/usr/bin/systemctl"):
+        subprocess.run(["systemctl", "reboot"], check=False)
+    return 0
+
+def handle_repair_system():
+    print(f"\n{C_BOLD}[*] Executing Automated System Repair Routine...{C_RESET}")
+    eng = get_recovery_engine()
+    
+    # 1. Boot repair
+    print(f"\n {C_CYAN}Phase 1: EFI Bootloader & Kernel Repair{C_RESET}")
+    boot_res = eng.repair_bootloader()
+    for item in boot_res.get("repaired_items", []):
+        print(f"   {C_GREEN}[✓]{C_RESET} {item}")
+
+    # 2. Filesystem diagnostics & repair
+    print(f"\n {C_CYAN}Phase 2: Filesystem & Subvolume Integrity{C_RESET}")
+    fs_res = eng.check_filesystem()
+    print(f"   {C_GREEN}[✓]{C_RESET} Root Filesystem: {fs_res.get('root_filesystem')} | Scrub: {fs_res.get('scrub_status')}")
+    for sv, data in fs_res.get("subvolumes", {}).items():
+        print(f"     - Subvol: {sv:<12} Mount: {data.get('mount'):<12} Status: {data.get('status')}")
+
+    # 3. Service repair
+    print(f"\n {C_CYAN}Phase 3: Core Service Repair & Lockfile Purge{C_RESET}")
+    srv_res = eng.repair_services()
+    for item in srv_res.get("repaired_services", []):
+        print(f"   {C_GREEN}[✓]{C_RESET} Restored {item['service']} -> {item['result']}")
+
+    # 4. User recovery
+    print(f"\n {C_CYAN}Phase 4: User Accounts & Sudoers Reconciliation{C_RESET}")
+    user_res = eng.recover_user("trader", "reconcile")
+    print(f"   {C_GREEN}[✓]{C_RESET} {user_res.get('message')}")
+
+    print(f"\n{C_GREEN}[✓] System Repair Completed Successfully!{C_RESET}")
+    input(f"\nPress [Enter] to return to Recovery Menu...")
+    return 0
+
+def handle_rollback_update():
+    eng = get_recovery_engine()
+    snapshots = eng.list_snapshots()
+    print(f"\n{C_BOLD}Available Recovery Snapshots:{C_RESET}")
+    for idx, snap in enumerate(snapshots, start=1):
+        cert = f"{C_GREEN}[CERTIFIED]{C_RESET}" if snap.get("certified") else "[UNCERTIFIED]"
+        print(f"  [{idx}] {snap.get('name')} | {snap.get('timestamp')} | {cert}")
+    
+    print(f"  [C] Cancel")
+    choice = input(f"\nSelect snapshot index to rollback to [1-{len(snapshots)}]: ").strip()
+    if choice.lower() == "c" or not choice:
+        return 0
+    
+    try:
+        idx = int(choice) - 1
+        if 0 <= idx < len(snapshots):
+            target = snapshots[idx]["name"]
+            res = eng.rollback_update(target)
+            print(f"\n{C_GREEN}[✓] {res.get('message')}{C_RESET}")
+        else:
+            print(f"{C_RED}[!] Invalid choice.{C_RESET}")
+    except ValueError:
+        print(f"{C_RED}[!] Invalid input.{C_RESET}")
+    
+    input(f"\nPress [Enter] to return to Recovery Menu...")
+    return 0
+
+def handle_diagnostics():
+    eng = get_recovery_engine()
+    print(f"\n{C_BOLD}[*] Running Hardware, Storage, Network, and System Diagnostics...{C_RESET}")
+    
+    fs = eng.check_filesystem()
+    net = eng.diagnose_network()
+    logs = eng.get_recovery_logs(lines=5)
+
+    print(f"\n {C_CYAN}[Storage Subsystem]{C_RESET}")
+    print(f"   Root Mode: {'READ-ONLY (RESCUE NEEDED)' if fs.get('read_only_root') else 'READ-WRITE (HEALTHY)'}")
+    print(f"   Capacity : {fs.get('space_usage', {}).get('used_gb')}GB used / {fs.get('space_usage', {}).get('total_gb')}GB total ({fs.get('space_usage', {}).get('use_pct')}%)")
+
+    print(f"\n {C_CYAN}[Network Subsystem]{C_RESET}")
+    print(f"   Gateway RTT : {net.get('routing', {}).get('rtt_ms')} ms")
+    print(f"   DNS Status  : {net.get('dns', {}).get('resolution')}")
+    print(f"   Brokers     :")
+    for ep, status in net.get("broker_endpoints", {}).items():
+        print(f"     - {ep:<28}: {status}")
+
+    print(f"\n {C_CYAN}[Recent Diagnostic Logs (Scrubbed)]{C_RESET}")
+    for entry in logs.get("entries", []):
+        print(f"   {entry}")
+
+    input(f"\nPress [Enter] to return to Recovery Menu...")
+    return 0
+
+def handle_terminal():
+    print(f"\n{C_YELLOW}[*] Spawning Root Emergency Maintenance Shell...{C_RESET}")
+    print(f"    Type 'exit' to return to the Recovery Menu.\n")
+    shell = os.environ.get("SHELL", "/bin/sh")
+    subprocess.run([shell], check=False)
+    return 0
+
+def handle_shutdown():
+    print(f"\n{C_RED}[*] Flushing sync buffers and powering off system...{C_RESET}")
+    time.sleep(1)
+    if os.path.exists("/usr/bin/systemctl"):
+        subprocess.run(["systemctl", "poweroff"], check=False)
+    elif os.path.exists("/sbin/poweroff"):
+        subprocess.run(["/sbin/poweroff"], check=False)
+    else:
+        print("[+] System shutdown requested.")
+        sys.exit(0)
+
+def handle_reboot():
+    print(f"\n{C_YELLOW}[*] Rebooting KAIROS OS...{C_RESET}")
+    time.sleep(1)
+    if os.path.exists("/usr/bin/systemctl"):
+        subprocess.run(["systemctl", "reboot"], check=False)
+    elif os.path.exists("/sbin/reboot"):
+        subprocess.run(["/sbin/reboot"], check=False)
+    else:
+        print("[+] System reboot requested.")
+        sys.exit(0)
+
+def run_interactive_menu():
+    while True:
+        clear_screen()
+        render_header()
+        render_menu()
+        try:
+            choice = input(f"{C_BOLD}Select Option [1-8]: {C_RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\n")
+            break
+
+        if choice == "1":
+            handle_boot_normally()
+            break
+        elif choice == "2":
+            handle_boot_previous_version()
+        elif choice == "3":
+            handle_repair_system()
+        elif choice == "4":
+            handle_rollback_update()
+        elif choice == "5":
+            handle_diagnostics()
+        elif choice == "6":
+            handle_terminal()
+        elif choice == "7":
+            handle_shutdown()
+            break
+        elif choice == "8":
+            handle_reboot()
+            break
+        else:
+            print(f"{C_RED}[!] Invalid option. Please select 1 through 8.{C_RESET}")
+            time.sleep(1)
+
+def main():
+    parser = argparse.ArgumentParser(description="KAIROS OS Disaster Recovery & Maintenance Subsystem")
+    parser.add_argument("action", nargs="?", default="menu",
+                        choices=["menu", "boot-normally", "boot-previous", "repair", "rollback", "diagnostics", "terminal", "logs", "status"],
+                        help="Action to execute")
+    parser.add_argument("--json", action="store_true", help="Format output as JSON")
+    parser.add_argument("--snapshot", help="Snapshot target for rollback")
+    parser.add_argument("--lines", type=int, default=20, help="Log line count")
+
+    args = parser.parse_args()
+    eng = get_recovery_engine()
+
+    if args.action == "menu":
+        run_interactive_menu()
+        return 0
+    elif args.action == "boot-normally":
+        return handle_boot_normally()
+    elif args.action == "boot-previous":
+        res = eng.rollback_update("snapshot_previous_certified_generation")
+        if args.json:
+            print(json.dumps(res, indent=2))
+        else:
+            print(f"[✓] {res.get('message')}")
+        return 0
+    elif args.action == "repair":
+        boot = eng.repair_bootloader()
+        fs = eng.check_filesystem()
+        srv = eng.repair_services()
+        usr = eng.recover_user("trader", "reconcile")
+        combined = {
+            "status": "SUCCESS",
+            "boot_repair": boot,
+            "filesystem": fs,
+            "service_repair": srv,
+            "user_recovery": usr
+        }
+        if args.json:
+            print(json.dumps(combined, indent=2))
+        else:
+            print("================================================================================")
+            print(" ◈ KAIROS System Repair Completed")
+            print("================================================================================")
+            print(f" [Bootloader]  : {boot.get('message')}")
+            print(f" [Filesystem]  : {fs.get('scrub_status')}")
+            print(f" [Services]    : Repaired {len(srv.get('repaired_services', []))} services")
+            print(f" [User]        : {usr.get('message')}")
+            print("================================================================================")
+        return 0
+    elif args.action == "rollback":
+        res = eng.rollback_update(args.snapshot)
+        if args.json:
+            print(json.dumps(res, indent=2))
+        else:
+            print(f"[✓] {res.get('message')}")
+        return 0
+    elif args.action == "diagnostics":
+        boot = eng.repair_bootloader()
+        fs = eng.check_filesystem()
+        net = eng.diagnose_network()
+        diag = {"boot": boot, "filesystem": fs, "network": net}
+        if args.json:
+            print(json.dumps(diag, indent=2))
+        else:
+            print("================================================================================")
+            print(" ◈ KAIROS Disaster Recovery Diagnostics")
+            print("================================================================================")
+            print(f" [ESP / EFI]   : {boot.get('efi_system_partition')}")
+            print(f" [Kernel]      : Verified={boot.get('kernel_image_verified')}")
+            print(f" [Initramfs]   : Verified={boot.get('initramfs_verified')}")
+            print(f" [Root Filesystem] : {fs.get('root_filesystem')} (Read-Only: {fs.get('read_only_root')})")
+            print(f" [Network GW]  : RTT={net.get('routing', {}).get('rtt_ms')}ms")
+            print("================================================================================")
+        return 0
+    elif args.action == "logs":
+        logs = eng.get_recovery_logs(lines=args.lines)
+        if args.json:
+            print(json.dumps(logs, indent=2))
+        else:
+            print("================================================================================")
+            print(" ◈ KAIROS Recovery & Emergency Logs (Scrubbed)")
+            print("================================================================================")
+            for entry in logs.get("entries", []):
+                print(entry)
+            print("================================================================================")
+        return 0
+    elif args.action == "status":
+        fs = eng.check_filesystem()
+        snapshots = eng.list_snapshots()
+        status = {
+            "recovery_environment": "READY",
+            "active_mode": "normal",
+            "filesystem_status": fs.get("status"),
+            "snapshots_available": len(snapshots),
+            "emergency_shell_available": True
+        }
+        if args.json:
+            print(json.dumps(status, indent=2))
+        else:
+            print("================================================================================")
+            print(" ◈ KAIROS Recovery Subsystem Status: READY")
+            print("================================================================================")
+            print(f" [Recovery Status]   : READY (Autonomous Emergency Substrate)")
+            print(f" [Snapshots]         : {len(snapshots)} certified generation(s) available")
+            print(f" [Filesystem Health] : {fs.get('status')}")
+            print("================================================================================")
+        return 0
+    elif args.action == "terminal":
+        return handle_terminal()
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

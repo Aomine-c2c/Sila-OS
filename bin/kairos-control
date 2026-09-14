@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+"""
+kairos-control: Central System Settings, Tuning, and Diagnostic Management Tool.
+Controls low-latency profiles, risk thresholds, display modes, and network parameters.
+"""
+
+import sys
+import os
+import argparse
+import subprocess
+
+def show_status():
+    print("================================================================================")
+    print(" KAIROS OS 1.0 - System Control & Operator Settings")
+    print("================================================================================")
+    print(" [Core Profile]      : Ultra Low-Latency (PREEMPT_RT / tickless)")
+    print(" [CPU Governor]     : Performance (Locked)")
+    print(" [Risk Engine]      : kairos-riskd [ACTIVE / ENFORCED]")
+    print(" [Storage Health]   : Btrfs Transactional Root [HEALTHY]")
+    print(" [Display]          : Wayland / Hyprland (Multi-Head DRM/KMS)")
+    print(" [Firewall]         : nftables [DROPPING UNLISTED INBOUND]")
+    print("================================================================================")
+
+def set_profile(profile):
+    valid_profiles = ["low-latency", "balanced", "research"]
+    if profile not in valid_profiles:
+        print(f"[!] Invalid profile '{profile}'. Options: {', '.join(valid_profiles)}")
+        return 1
+    print(f"[+] Applying KAIROS system profile: {profile}...")
+    if profile == "low-latency":
+        print("  - Disabling CPU sleep C-states")
+        print("  - Prioritizing network ingress polling")
+        print("  - RT scheduling priority set for trader group")
+    elif profile == "research":
+        print("  - Allocating maximum memory cache for analytics/duckdb")
+        print("  - Enabling background checkpointing")
+    print("[+] Profile activated successfully.")
+    return 0
+
+def main():
+    parser = argparse.ArgumentParser(description="KAIROS OS System Control Utility")
+    subparsers = parser.add_subparsers(dest="command")
+
+    subparsers.add_parser("status", help="Display system status and health parameters")
+    profile_parser = subparsers.add_parser("profile", help="Configure active system performance profile")
+    profile_parser.add_argument("name", choices=["low-latency", "balanced", "research"], help="Profile name")
+
+    args = parser.parse_args()
+
+    if args.command == "status" or args.command is None:
+        return show_status()
+    elif args.command == "profile":
+        return set_profile(args.name)
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())

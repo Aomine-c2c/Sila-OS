@@ -1,0 +1,24 @@
+[Unit]
+Description=KAIROS OS Installer (Live Environment)
+Documentation=https://kairos-os.org/docs/install
+DefaultDependencies=no
+After=network.target systemd-udev-settle.service
+ConditionKernelCommandLine=kairos.mode=installer
+
+[Service]
+Type=idle
+Environment=TERM=linux
+ExecStart=/usr/libexec/kairos/kairos_installer.py
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty2
+TTYReset=yes
+TTYVHangup=yes
+KillMode=process
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

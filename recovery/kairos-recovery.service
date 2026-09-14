@@ -1,0 +1,27 @@
+[Unit]
+Description=KAIROS OS Recovery Environment
+Documentation=https://kairos-os.org/docs/recovery
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+After=sysinit.target local-fs.target
+ConditionKernelCommandLine=kairos.mode=recovery
+
+[Service]
+Type=idle
+Environment=TERM=linux
+ExecStart=/usr/libexec/kairos/kairos_recovery.py menu
+ExecStopPost=/bin/systemctl reboot
+StandardInput=tty
+StandardOutput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+KillMode=process
+IgnoreSIGPIPE=no
+SendSIGHUP=yes
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
