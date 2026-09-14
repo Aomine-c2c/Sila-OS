@@ -1,0 +1,37 @@
+# KAIROS Build Containerfile (Arch Linux Base)
+# Provides hermetic environment with Arch Linux packages for building KAIROS OS
+FROM archlinux:latest
+
+LABEL maintainer="KAIROS OS Distribution Team"
+LABEL description="Hermetic build container for KAIROS OS (Arch Linux Base)"
+
+ENV LANG=C.UTF-8
+ENV PKGCONF=1
+ENV MAKEFLAGS="-j$(nproc)"
+
+# Install foundational build tools, compilers, ISO mastering, and QEMU tools
+RUN pacman -Sy --noconfirm --needed \
+    base-devel \
+    git \
+    python3 \
+    python3-pip \
+    xorriso \
+    squashfs-tools \
+    mtools \
+    dosfstools \
+    grub \
+    efibootmgr \
+    systemd-container \
+    qemu-img \
+    qemu-system-x86_64 \
+    btrfs-progs \
+    util-linux \
+    e2fsprogs \
+    which \
+    curl \
+    rsync \
+    limine \
+    && pacman -Scc --noconfirm
+
+WORKDIR /kairos
+ENTRYPOINT ["/bin/bash"]

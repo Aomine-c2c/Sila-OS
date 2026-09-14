@@ -1,0 +1,8 @@
+[Unit]
+Description=KAIROS System Infrastructure Services Target
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+Wants=kairos-sysd.service kairos-watchdog.service systemd-networkd.service
+After=kairos-sysd.service
+
+[Install]
+WantedBy=multi-user.target

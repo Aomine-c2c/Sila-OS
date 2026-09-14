@@ -1,0 +1,17 @@
+[Unit]
+Description=KAIROS Immutable Trading Risk Gatekeeper Daemon
+Documentation=https://kairos-os.org/docs/risk
+After=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/libexec/kairos/kairos-riskd.py
+Restart=always
+RestartSec=1
+CPUSchedulingPolicy=rr
+CPUSchedulingPriority=90
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

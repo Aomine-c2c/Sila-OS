@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=KAIROS Desktop (Hyprland Wayland)
+Comment=High-Performance Quantitative Trading Workstation Compositor
+Exec=Hyprland
+Type=Application
+DesktopNames=Hyprland

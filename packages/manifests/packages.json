@@ -1,0 +1,164 @@
+{
+  "repository": "kairos-software-substrate",
+  "version": "1.0.0",
+  "description":KAIROS Operating System Tiered Software Registry (Arch Linux Base)",
+  "categories": [
+    "CORE",
+    "OPTIONAL",
+    "TRADING",
+    "RESEARCH",
+    "DEVELOPMENT",
+    "EXPERIMENTAL"
+  ],
+  "invariants": {
+    "no_silent_system_replacement": true,
+    "experimental_isolation": "SANDBOX_ONLY",
+    "mandatory_risk_gatekeeper": "ENFORCED"
+  },
+  "package_manager": "pacman",
+  "packages": [
+    {
+      "name": "kairos-base",
+      "category": "CORE",
+      "version": "1.0.0",
+      "backend": "pacman",
+      "native_package": "systemd,glibc,kernel",
+      "description": "Fundamental KAIROS real-time kernel, systemd init, and core OS runtime",
+      "installed": true,
+      "immutable": true,
+      "size_mb": 420.0
+    },
+    {
+      "name": "kairos-sysd",
+      "category": "CORE",
+      "version": "1.0.0",
+      "backend": "kairos",
+      "native_package": "kairos-sysd",
+      "description": "Privileged OS System Interface Boundary Daemon with SO_PEERCRED RBAC",
+      "installed": true,
+      "immutable": true,
+      "size_mb": 12.5
+    },
+    {
+      "name": "kairos-desktop-hyprland",
+      "category": "CORE",
+      "version": "0.41.2",
+      "backend": "pacman",
+      "native_package": "hyprland,waybar,mako,greetd",
+      "description": "Minimal deterministic Wayland compositor, status bar, and greeter suite",
+      "installed": true,
+      "immutable": true,
+      "size_mb": 185.0
+    },
+    {
+      "name": "kairos-risk-engine",
+      "category": "TRADING",
+      "version": "1.0.0",
+      "backend": "kairos",
+      "native_package": "kairos-riskd",
+      "description": "Hardware-enforced immutable trading risk gatekeeper with real-time FIFO/RR scheduling",
+      "installed": true,
+      "immutable": true,
+      "size_mb": 8.4
+    },
+    {
+      "name": "kairos-feed-gateway",
+      "category": "TRADING",
+      "version": "1.0.0",
+      "backend": "kairos",
+      "native_package": "kairos-feedd",
+      "description": "Low-latency market data ingestion ringbuffer for Level 1/2 financial ticks",
+      "installed": true,
+      "immutable": false,
+      "size_mb": 14.2
+    },
+    {
+      "name": "tradingview-desktop",
+      "category": "OPTIONAL",
+      "version": "2.6.0",
+      "backend": "flatpak",
+      "native_package": "com.tradingview.Desktop",
+      "description": "Sandboxed institutional charting and multi-asset technical analysis platform",
+      "installed": false,
+      "immutable": false,
+      "size_mb": 210.0
+    },
+    {
+      "name": "firefox-hardened",
+      "category": "OPTIONAL",
+      "version": "128.0",
+      "backend": "flatpak",
+      "native_package": "org.mozilla.firefox",
+      "description": "Privacy-hardened, sandboxed browser for financial news and documentation",
+      "installed": true,
+      "immutable": false,
+      "size_mb": 95.0
+    },
+    {
+      "name": "kairos-research-analytics",
+      "category": "RESEARCH",
+      "version": "1.0.0",
+      "backend": "pacman",
+      "native_package": "python-numpy python-polars python-pyarrow python-scipy",
+      "description": "High-throughput quantitative factor modeling, vector math, and Arrow/Parquet data analytics",
+      "installed": true,
+      "immutable": false,
+      "size_mb": 340.0
+    },
+    {
+      "name": "kairos-jupyter-lab",
+      "category": "RESEARCH",
+      "version": "4.2.1",
+      "backend": "pacman",
+      "native_package": "python-jupyterlab",
+      "description": "Local sandbox quantitative exploratory research notebook environment",
+      "installed": false,
+      "immutable": false,
+      "size_mb": 85.0
+    },
+    {
+      "name": "kairos-toolchain-cxx-rust",
+      "category": "DEVELOPMENT",
+      "version": "1.80.0",
+      "backend": "pacman",
+      "native_package": "gcc clang rust cmake",
+      "description": "Native high-performance compilation toolchain for C++23 and Rust algorithmic strategies",
+      "installed": true,
+      "immutable": false,
+      "size_mb": 620.0
+    },
+    {
+      "name": "perf-tools-bcc",
+      "category": "DEVELOPMENT",
+      "version": "6.6.0",
+      "backend": "pacman",
+      "native_package": "linux-tools-bpf bcc",
+      "description": "Linux kernel eBPF performance analysis, cache miss profiling, and latency trace utilities",
+      "installed": true,
+      "immutable": false,
+      "size_mb": 78.0
+    },
+    {
+      "name": "experimental-quantum-annealer",
+      "category": "EXPERIMENTAL",
+      "version": "0.1.0-alpha",
+      "backend": "kairos",
+      "native_package": "kairos-qanneal",
+      "description": "Simulated quantum annealing portfolio optimizer (Sandboxed user-space runtime)",
+      "installed": false,
+      "immutable": false,
+      "size_mb": 45.0
+    },
+    {
+      "name": "experimental-llm-order-reasoner",
+      "category": "EXPERIMENTAL",
+      "version": "0.2.0-preview",
+      "backend": "kairos",
+      "native_package": "kairos-llm-reasoner",
+      "description": "Experimental autonomous LLM order reasoner (Advisory only; cannot replace RiskGatekeeper)",
+      "installed": false,
+      "immutable": false,
+      "size_mb": 512.0
+    }
+  ]
+}

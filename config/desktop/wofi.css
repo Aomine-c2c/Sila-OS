@@ -1,0 +1,58 @@
+/* KAIROS Wofi Launcher Styling */
+/* Minimal, low-distraction dark theme with cyan focus highlight */
+
+window {
+    margin: 0px;
+    border: 2px solid #00f0ff;
+    background-color: #0c0e14;
+    border-radius: 6px;
+    font-family: "JetBrains Mono", "Roboto Mono", monospace;
+    font-size: 13px;
+}
+
+#input {
+    margin: 8px;
+    padding: 8px 12px;
+    border: 1px solid #1a1e28;
+    color: #f1f5f9;
+    background-color: #12151e;
+    border-radius: 4px;
+}
+
+#input:focus {
+    border: 1px solid #00f0ff;
+}
+
+#inner-box {
+    margin: 4px;
+    border: none;
+    background-color: transparent;
+}
+
+#outer-box {
+    margin: 4px;
+    border: none;
+    background-color: transparent;
+}
+
+#scroll {
+    margin: 0px;
+    border: none;
+}
+
+#text {
+    margin: 4px;
+    border: none;
+    color: #cbd5e1;
+}
+
+#entry:selected {
+    background-color: rgba(0, 240, 255, 0.15);
+    border-left: 3px solid #00f0ff;
+    border-radius: 2px;
+}
+
+#text:selected {
+    color: #ffffff;
+    font-weight: bold;
+}

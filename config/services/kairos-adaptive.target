@@ -1,0 +1,8 @@
+[Unit]
+Description=KAIROS Adaptive Evolution Intelligence Target
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+Wants=kairos-adaptived.service
+After=kairos-system.target
+
+[Install]
+WantedBy=multi-user.target

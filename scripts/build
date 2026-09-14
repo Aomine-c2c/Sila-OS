@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# KAIROS Orchestrated Build Runner
+# Verifies dependencies, initializes logging, sets up build artifacts directory,
+# and executes the build target with full logging and checksum generation.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+TARGET="${1:-all}"
+LOG_DIR="${ROOT_DIR}/build/logs"
+ARTIFACTS_DIR="${ROOT_DIR}/out"
+
+mkdir -p "$LOG_DIR" "$ARTIFACTS_DIR"
+
+TIMESTAMP="$(date -u +"%Y%m%d_%H%M%SZ")"
+BUILD_LOG="${LOG_DIR}/build_${TARGET}_${TIMESTAMP}.log"
+
+echo "================================================================================" | tee -a "$BUILD_LOG"
+echo " ◈ KAIROS OS Build Runner - Target: ${TARGET}" | tee -a "$BUILD_LOG"
+echo " Timestamp : $(date -u +"%Y-%m-%d %H:%M:%S UTC")" | tee -a "$BUILD_LOG"
+echo " Build Log : ${BUILD_LOG}" | tee -a "$BUILD_LOG"
+echo "================================================================================" | tee -a "$BUILD_LOG"
+
+# Step 1: Verify build environment & dependencies first
+echo "[*] Auditing build environment and dependencies..." | tee -a "$BUILD_LOG"
+if ! bash scripts/check-environment >> "$BUILD_LOG" 2>&1; then
+    echo "[!] ERROR: Host environment failed validation! Check log: ${BUILD_LOG}" >&2
+    exit 1
+fi
+echo "[+] Build environment validated." | tee -a "$BUILD_LOG"
+
+# Step 2: Execute Target
+case "$TARGET" in
+    base)
+        echo "[*] Staging Linux Base FHS..." | tee -a "$BUILD_LOG"
+        bash scripts/phases/02_linux_base.sh 2>&1 | tee -a "$BUILD_LOG"
+        ;;
+    kernel)
+        echo "[*] Deploying PREEMPT_RT kernel configuration..." | tee -a "$BUILD_LOG"
+        bash scripts/phases/03_kernel.sh 2>&1 | tee -a "$BUILD_LOG"
+        ;;
+    desktop)
+        echo "[*] Deploying Wayland and Hyprland desktop..." | tee -a "$BUILD_LOG"
+        bash scripts/phases/11_wayland.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/12_hyprland.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/13_kairos_shell.sh 2>&1 | tee -a "$BUILD_LOG"
+        ;;
+    trading)
+        echo "[*] Staging Trading Infrastructure and Risk Gatekeeper..." | tee -a "$BUILD_LOG"
+        bash scripts/phases/19_trading_services.sh 2>&1 | tee -a "$BUILD_LOG"
+        ;;
+    iso)
+        echo "[*] Calling ISO builder..." | tee -a "$BUILD_LOG"
+        bash scripts/build-iso 2>&1 | tee -a "$BUILD_LOG"
+        ;;
+    all)
+        echo "[*] Building complete operating system distribution..." | tee -a "$BUILD_LOG"
+        bash scripts/phases/01_build_system.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/02_linux_base.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/03_kernel.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/04_boot.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/05_storage.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/06_users.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/07_networking.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/08_services.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/09_hardware.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/10_graphics.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/11_wayland.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/12_hyprland.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/13_kairos_shell.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/14_desktop_utils.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/15_system_settings.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/16_package_management.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/17_security.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/18_update_recovery.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/19_trading_services.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/20_research_env.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/21_plugin_infra.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/22_ai_agents.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/23_adaptive_intelligence.sh 2>&1 | tee -a "$BUILD_LOG"
+        bash scripts/phases/24_installer.sh 2>&1 | tee -a "$BUILD_LOG"
+        ;;
+    *)
+        echo "[!] Unknown target '$TARGET'. Valid options: base, kernel, desktop, trading, iso, all." | tee -a "$BUILD_LOG"
+        exit 1
+        ;;
+esac
+
+echo "================================================================================" | tee -a "$BUILD_LOG"
+echo "[+] Build of '${TARGET}' completed successfully." | tee -a "$BUILD_LOG"
+echo " Build log saved at: ${BUILD_LOG}" | tee -a "$BUILD_LOG"
+echo "================================================================================" | tee -a "$BUILD_LOG"

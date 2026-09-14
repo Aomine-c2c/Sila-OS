@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# KAIROS Automated Test Runner
+# Verifies test dependencies, runs unit and invariant test suites, and outputs structured status.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+echo "================================================================================"
+echo " ◈ KAIROS OS Automated Test Suite"
+echo "================================================================================"
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "[!] Error: python3 is required to run KAIROS test suites." >&2
+    exit 1
+fi
+
+echo "[*] Executing unit tests and architectural invariant verifications..."
+python3 -m unittest discover -s tests -p "test_*.py" -v
+
+echo "================================================================================"
+echo "[+] All KAIROS OS tests passed successfully."

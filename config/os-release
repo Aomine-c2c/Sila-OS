@@ -1,0 +1,12 @@
+NAME="KAIROS OS"
+PRETTY_NAME="KAIROS OS 1.0 (Arch Linux / Quant & Trading Engineered)"
+ID=kairos
+ID_LIKE="arch"
+VERSION="1.0"
+VERSION_ID="1.0"
+HOME_URL="https://kairos-os.org"
+SUPPORT_URL="https://kairos-os.org/support"
+BUG_REPORT_URL="https://kairos-os.org/issues"
+PRIVACY_POLICY_URL="https://kairos-os.org/privacy"
+ANSI_COLOR="0;36"
+LOGO=kairos-logo

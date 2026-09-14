@@ -1,0 +1,21 @@
+# KAIROS Static IP Wired Connection Example Template
+# Rename to 25-wired-static.network to activate
+
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=no
+Address=192.168.1.150/24
+Gateway=192.168.1.1
+DNS=1.1.1.1 9.9.9.9
+IPv6PrivacyExtensions=kernel
+LinkLocalAddressing=ipv6
+
+# Optional Static IPv6 Address
+# Address=2001:db8::100/64
+# Gateway=2001:db8::1
+
+[Route]
+Metric=100
+Gateway=192.168.1.1

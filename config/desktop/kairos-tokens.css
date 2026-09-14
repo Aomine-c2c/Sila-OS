@@ -1,0 +1,125 @@
+/**
+ * KAIROS Design System - Unified CSS Variables & Theming Engine
+ * Defaults to Light Mode (calm, precise, information-dense, high contrast)
+ * Provides Dark Mode via [data-theme="dark"] or system media query
+ */
+
+:root {
+  /* Typography */
+  --kairos-font-mono: 'JetBrains Mono', 'Roboto Mono', 'SF Mono', 'Menlo', monospace;
+  --kairos-font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  
+  --kairos-text-xs: 11px;
+  --kairos-text-sm: 12px;
+  --kairos-text-base: 13px;
+  --kairos-text-md: 14px;
+  --kairos-text-lg: 16px;
+  --kairos-text-xl: 18px;
+
+  --kairos-font-normal: 400;
+  --kairos-font-medium: 500;
+  --kairos-font-semibold: 600;
+  --kairos-font-bold: 700;
+
+  --kairos-lh-dense: 1.2;
+  --kairos-lh-normal: 1.4;
+
+  /* Spacing */
+  --kairos-space-2xs: 2px;
+  --kairos-space-xs: 4px;
+  --kairos-space-sm: 6px;
+  --kairos-space-md: 8px;
+  --kairos-space-lg: 12px;
+  --kairos-space-xl: 16px;
+  --kairos-space-2xl: 24px;
+
+  /* Borders & Radius */
+  --kairos-radius-none: 0px;
+  --kairos-radius-sharp: 2px;
+  --kairos-radius-std: 4px;
+  --kairos-border-width: 1px;
+  --kairos-focus-width: 2px;
+
+  /* --- LIGHT MODE (DEFAULT) --- */
+  --kairos-surface-base: #f8fafc;
+  --kairos-surface-panel: #ffffff;
+  --kairos-surface-elevated: #f1f5f9;
+  --kairos-surface-sunken: #e2e8f0;
+
+  --kairos-border-subtle: #e2e8f0;
+  --kairos-border-default: #cbd5e1;
+  --kairos-border-focus: #0284c7;
+
+  --kairos-text-primary: #0f172a;
+  --kairos-text-secondary: #475569;
+  --kairos-text-muted: #64748b;
+  --kairos-text-inverse: #ffffff;
+
+  --kairos-interactive-hover: #f1f5f9;
+  --kairos-interactive-active: #e2e8f0;
+  --kairos-interactive-selected: #e0f2fe;
+  --kairos-accent: #0284c7;
+
+  /* Status States - Light Mode */
+  --kairos-state-nominal-text: #059669;
+  --kairos-state-nominal-bg: #ecfdf5;
+  --kairos-state-nominal-border: #10b981;
+
+  --kairos-state-warning-text: #d97706;
+  --kairos-state-warning-bg: #fffbeb;
+  --kairos-state-warning-border: #f59e0b;
+
+  --kairos-state-critical-text: #dc2626;
+  --kairos-state-critical-bg: #fef2f2;
+  --kairos-state-critical-border: #ef4444;
+
+  --kairos-state-info-text: #0284c7;
+  --kairos-state-info-bg: #f0f9ff;
+  --kairos-state-info-border: #38bdf8;
+
+  --kairos-shadow-low: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --kairos-shadow-med: 0 2px 4px rgba(15, 23, 42, 0.08);
+}
+
+/* --- DARK MODE (OPTIONAL SYSTEM THEME) --- */
+[data-theme="dark"],
+.theme-dark {
+  --kairos-surface-base: #0a0c10;
+  --kairos-surface-panel: #11141b;
+  --kairos-surface-elevated: #181c26;
+  --kairos-surface-sunken: #06080a;
+
+  --kairos-border-subtle: #1e2330;
+  --kairos-border-default: #333b4f;
+  --kairos-border-focus: #00f0ff;
+
+  --kairos-text-primary: #f1f5f9;
+  --kairos-text-secondary: #94a3b8;
+  --kairos-text-muted: #64748b;
+  --kairos-text-inverse: #0f172a;
+
+  --kairos-interactive-hover: #181c26;
+  --kairos-interactive-active: #222736;
+  --kairos-interactive-selected: rgba(0, 240, 255, 0.12);
+  --kairos-accent: #00f0ff;
+
+  /* Status States - Dark Mode */
+  --kairos-state-nominal-text: #00ff88;
+  --kairos-state-nominal-bg: rgba(0, 255, 136, 0.12);
+  --kairos-state-nominal-border: #00ff88;
+
+  --kairos-state-warning-text: #ffd700;
+  --kairos-state-warning-bg: rgba(255, 215, 0, 0.12);
+  --kairos-state-warning-border: #ffd700;
+
+  --kairos-state-critical-text: #ff3366;
+  --kairos-state-critical-bg: rgba(255, 51, 102, 0.15);
+  --kairos-state-critical-border: #ff3366;
+
+  --kairos-state-info-text: #00f0ff;
+  --kairos-state-info-bg: rgba(0, 240, 255, 0.12);
+  --kairos-state-info-border: #00f0ff;
+
+  --kairos-shadow-low: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --kairos-shadow-med: 0 2px 6px rgba(0, 0, 0, 0.45);
+}

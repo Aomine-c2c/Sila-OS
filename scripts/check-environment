@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# KAIROS Comprehensive Build Environment Diagnostic
+# Reports whether the host machine meets the requirements to build KAIROS OS.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# Formatting colors
+BOLD='\033[1m'
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+ERRORS=0
+WARNINGS=0
+
+echo -e "${BOLD}${BLUE}================================================================================${NC}"
+echo -e "${BOLD}${BLUE} ◈ KAIROS OS Build Environment & Host System Diagnostic${NC}"
+echo -e "${BOLD}${BLUE}================================================================================${NC}"
+
+# 1. Host Operating System & Execution Context
+OS_TYPE="$(uname -s 2>/dev/null || echo 'Unknown')"
+ARCH="$(uname -m 2>/dev/null || echo 'Unknown')"
+KERNEL_REL="$(uname -r 2>/dev/null || echo 'Unknown')"
+
+CONTEXT="Native Linux (Bare-Metal / Standard Host)"
+if grep -qi "microsoft" /proc/version 2>/dev/null || [[ -n "${WSL_DISTRO_NAME:-}" ]]; then
+    CONTEXT="Windows Subsystem for Linux (WSL2)"
+elif [[ -f "/.dockerenv" ]] || [[ -f "/run/.containerenv" ]]; then
+    CONTEXT="Containerized Environment (Docker/Podman)"
+fi
+
+echo -e "  [*] OS Kernel Name     : ${BOLD}${OS_TYPE}${NC}"
+echo -e "  [*] Architecture       : ${BOLD}${ARCH}${NC}"
+echo -e "  [*] Kernel Release     : ${BOLD}${KERNEL_REL}${NC}"
+echo -e "  [*] Execution Context  : ${BOLD}${CONTEXT}${NC}"
+
+if [[ "$ARCH" != "x86_64" ]]; then
+    echo -e "  ${RED}[!] FAIL: Architecture '${ARCH}' is unsupported. KAIROS requires x86_64.${NC}"
+    ERRORS=$((ERRORS + 1))
+else
+    echo -e "  ${GREEN}[+] PASS: Architecture is 64-bit x86_64.${NC}"
+fi
+
+# 2. CPU Capabilities (AVX2, FMA, Virtualization)
+echo -e "\n${BOLD}[*] CPU Capabilities & Instructions:${NC}"
+CPU_CORES="$(nproc 2>/dev/null || echo '1')"
+echo -e "  [*] Logical CPU Cores  : ${BOLD}${CPU_CORES}${NC}"
+
+if [[ "$CPU_CORES" -lt 2 ]]; then
+    echo -e "  ${YELLOW}[!] WARN: Fewer than 2 CPU cores available. Builds may be slow.${NC}"
+    WARNINGS=$((WARNINGS + 1))
+else
+    echo -e "  ${GREEN}[+] PASS: CPU core count sufficient (${CPU_CORES} cores).${NC}"
+fi
+
+if grep -qi "avx2" /proc/cpuinfo 2>/dev/null; then
+    echo -e "  ${GREEN}[+] PASS: AVX2 instructions supported (x86-64-v3 compliant).${NC}"
+else
+    echo -e "  ${YELLOW}[!] WARN: AVX2 not detected. Quant vectorization may fall back to SSE4.2.${NC}"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+if grep -Eq "(vmx|svm)" /proc/cpuinfo 2>/dev/null; then
+    echo -e "  ${GREEN}[+] PASS: Hardware virtualization (VT-x / AMD-V) supported.${NC}"
+else
+    echo -e "  ${YELLOW}[!] WARN: Hardware virtualization not exposed. QEMU acceleration unavailable.${NC}"
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# 3. RAM Requirements (Min 4GB recommended)
+echo -e "\n${BOLD}[*] Physical Memory:${NC}"
+MEM_KB="$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo '0')"
+MEM_GB=$(( MEM_KB / 1024 / 1024 ))
+echo -e "  [*] Total System RAM   : ${BOLD}${MEM_GB} GB${NC}"
+
+if [[ "$MEM_GB" -lt 3 ]]; then
+    echo -e "  ${RED}[!] FAIL: Insufficient RAM (< 3 GB). OS compilation requires at least 4 GB.${NC}"
+    ERRORS=$((ERRORS + 1))
+elif [[ "$MEM_GB" -lt 6 ]]; then
+    echo -e "  ${YELLOW}[!] WARN: RAM is below recommended 8 GB (${MEM_GB} GB). Heavy parallel compilation may be constrained.${NC}"
+    WARNINGS=$((WARNINGS + 1))
+else
+    echo -e "  ${GREEN}[+] PASS: Sufficient RAM (${MEM_GB} GB).${NC}"
+fi
+
+# 4. Storage Space (Min 10GB recommended)
+echo -e "\n${BOLD}[*] Storage & Disk Space:${NC}"
+AVAIL_KB="$(df -k "$ROOT_DIR" 2>/dev/null | awk 'NR==2 {print $4}' || echo '0')"
+AVAIL_GB=$(( AVAIL_KB / 1024 / 1024 ))
+echo -e "  [*] Available Space    : ${BOLD}${AVAIL_GB} GB${NC} on ${ROOT_DIR}"
+
+if [[ "$AVAIL_GB" -lt 5 ]]; then
+    echo -e "  ${RED}[!] FAIL: Insufficient disk space (< 5 GB). Minimum 10 GB required for rootfs and ISO.${NC}"
+    ERRORS=$((ERRORS + 1))
+elif [[ "$AVAIL_GB" -lt 10 ]]; then
+    echo -e "  ${YELLOW}[!] WARN: Available disk space is low (< 10 GB).${NC}"
+    WARNINGS=$((WARNINGS + 1))
+else
+    echo -e "  ${GREEN}[+] PASS: Adequate disk space available (${AVAIL_GB} GB).${NC}"
+fi
+
+# 5. User Privileges
+echo -e "\n${BOLD}[*] Privileges:${NC}"
+CURRENT_UID="$(id -u 2>/dev/null || echo '1000')"
+if [[ "$CURRENT_UID" -eq 0 ]]; then
+    echo -e "  ${GREEN}[+] User is root (Direct rootfs operations and loop mounts permitted).${NC}"
+else
+    if sudo -n true 2>/dev/null; then
+        echo -e "  ${GREEN}[+] User is non-root with passwordless sudo rights.${NC}"
+    else
+        echo -e "  ${YELLOW}[*] User is unprivileged. Sudo or container root mapping required for chroot/mksquashfs.${NC}"
+    fi
+fi
+
+# 6. Toolchain & Tooling Audit
+echo -e "\n${BOLD}[*] Tooling & Dependency Verification:${NC}"
+
+check_cmd() {
+    local cmd="$1"
+    local req="$2"
+    local desc="$3"
+    
+    if command -v "$cmd" >/dev/null 2>&1; then
+        local p
+        p="$(which "$cmd")"
+        printf "  ${GREEN}[+] PASS${NC} : %-18s [%-8s] - %s (%s)\n" "$cmd" "$req" "$desc" "$p"
+    else
+        if [[ "$req" == "REQUIRED" ]]; then
+            printf "  ${RED}[!] FAIL${NC} : %-18s [%-8s] - %s (MISSING)\n" "$cmd" "$req" "$desc"
+            ERRORS=$((ERRORS + 1))
+        else
+            printf "  ${YELLOW}[*] WARN${NC} : %-18s [%-8s] - %s (MISSING - optional)\n" "$cmd" "$req" "$desc"
+            WARNINGS=$((WARNINGS + 1))
+        fi
+    fi
+}
+
+# Core build tools
+check_cmd "bash" "REQUIRED" "Shell execution engine"
+check_cmd "make" "REQUIRED" "Build orchestration"
+check_cmd "python3" "REQUIRED" "Manifest parsing and test suite runner"
+check_cmd "tar" "REQUIRED" "Archive extraction and creation"
+check_cmd "gzip" "REQUIRED" "Compression utility"
+
+# ISO and Filesystem tools
+check_cmd "mksquashfs" "REQUIRED" "Squashfs compressed rootfs generator"
+check_cmd "xorriso" "REQUIRED" "Hybrid ISO9660 mastering engine"
+check_cmd "sha256sum" "REQUIRED" "Cryptographic checksum attestation"
+
+# Compiler / Toolchain
+check_cmd "gcc" "OPTIONAL" "C compiler for native extensions"
+check_cmd "git" "OPTIONAL" "Version control tracking"
+
+# Container engines
+check_cmd "podman" "OPTIONAL" "Hermetic container build engine (preferred)"
+check_cmd "docker" "OPTIONAL" "Alternative container build engine"
+
+# Emulation & VM
+check_cmd "qemu-system-x86_64" "OPTIONAL" "Hypervisor for VM boot verification"
+check_cmd "qemu-img" "OPTIONAL" "Disk image management"
+
+# 7. Summary Report
+echo -e "\n${BOLD}${BLUE}================================================================================${NC}"
+if [[ $ERRORS -eq 0 ]]; then
+    echo -e " ${GREEN}${BOLD}✔ SYSTEM READY: This machine meets all requirements to build KAIROS OS.${NC}"
+    if [[ $WARNINGS -gt 0 ]]; then
+        echo -e " ${YELLOW}(Notice: $WARNINGS optional tools/capabilities missing. Some advanced features like VM boot will be disabled.)${NC}"
+    fi
+    echo -e "${BOLD}${BLUE}================================================================================${NC}"
+    exit 0
+else
+    echo -e " ${RED}${BOLD}✘ SYSTEM NOT READY: $ERRORS required dependency/prerequisite failure(s) detected.${NC}"
+    echo -e " Please install the missing required packages or run inside the official KAIROS build container."
+    echo -e "${BOLD}${BLUE}================================================================================${NC}"
+    exit 1
+fi

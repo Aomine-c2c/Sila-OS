@@ -1,0 +1,119 @@
+{
+    "layer": "top",
+    "position": "top",
+    "height": 32,
+    "modules-left": [
+        "custom/logo",
+        "hyprland/workspaces",
+        "custom/palette_btn",
+        "custom/risk_status"
+    ],
+    "modules-center": [
+        "custom/market_ticker"
+    ],
+    "modules-right": [
+        "custom/broker_status",
+        "custom/adaptive_status",
+        "custom/jitter",
+        "pulseaudio",
+        "network",
+        "battery",
+        "cpu",
+        "memory",
+        "clock",
+        "tray"
+    ],
+
+    "custom/logo": {
+        "format": " ◈ KAIROS ",
+        "tooltip": false,
+        "on-click": "foot -e kairos system info"
+    },
+    "hyprland/workspaces": {
+        "format": "{id}: {name}",
+        "on-click": "activate",
+        "sort-by-number": true
+    },
+    "custom/palette_btn": {
+        "format": "⌘ CMD",
+        "tooltip": "Open KAIROS Command Palette (Super+P)",
+        "on-click": "python3 /usr/libexec/kairos/kairos_cmd.py --list | wofi --dmenu --prompt 'KAIROS Command Palette' | xargs -r python3 /usr/libexec/kairos/kairos_cmd.py"
+    },
+    "custom/risk_status": {
+        "format": "🛡️ RISK: LOCKED-STABLE",
+        "interval": 2,
+        "exec": "cat /var/run/kairos/risk_status.txt 2>/dev/null || echo '🛡️ RISK: ACTIVE'",
+        "on-click": "foot -e python3 /usr/libexec/kairos/kairos_cmd.py show risk"
+    },
+    "custom/market_ticker": {
+        "format": "📊 SPY 504.20 ▲ +0.4% | BTC 64,120 ▲ +1.2% | US10Y 4.28% ▼",
+        "interval": 5,
+        "on-click": "foot -e python3 /usr/libexec/kairos/kairos_cmd.py show positions"
+    },
+    "custom/broker_status": {
+        "format": "⚡ BROKERS: OK",
+        "interval": 3,
+        "tooltip": "Click to inspect Broker Gateways",
+        "on-click": "foot -e python3 /usr/libexec/kairos/kairos_cmd.py show brokers"
+    },
+    "custom/adaptive_status": {
+        "format": "{}",
+        "return-type": "json",
+        "interval": 2,
+        "exec": "python3 -c \"from adaptive.adaptive_wheel import get_adaptive_wheel; import json; print(json.dumps(get_adaptive_wheel().get_waybar_badge()))\" 2>/dev/null || echo '{\"text\":\"⎊ AEI: [IDLE]\",\"tooltip\":\"Adaptive Wheel Ready\"}'",
+        "tooltip": true,
+        "on-click": "foot -e kairos adaptive wheel"
+    },
+    "custom/jitter": {
+        "format": "⚡ 0.12ms",
+        "interval": 1,
+        "tooltip": "Kernel Scheduling & Network Jitter"
+    },
+    "pulseaudio": {
+        "format": "{icon} {volume}%",
+        "format-muted": "🔇 MUTED",
+        "format-icons": {
+            "default": ["🔈", "🔉", "🔊"]
+        },
+        "on-click": "pamixer -t",
+        "on-scroll-up": "pamixer -i 5",
+        "on-scroll-down": "pamixer -d 5"
+    },
+    "network": {
+        "format-wifi": " {essid} ({signalStrength}%)",
+        "format-ethernet": "󰈀 ETH {ipaddr}",
+        "format-linked": "󰈀 ETH (No IP)",
+        "format-disconnected": "⚠ NO NET",
+        "tooltip-format": "Gateway: {gwaddr} | Interface: {ifname}",
+        "on-click": "nm-connection-editor || foot -e kairos network status"
+    },
+    "battery": {
+        "states": {
+            "good": 95,
+            "warning": 30,
+            "critical": 15
+        },
+        "format": "{icon} {capacity}%",
+        "format-charging": "⚡ {capacity}%",
+        "format-plugged": " {capacity}%",
+        "format-icons": ["", "", "", "", ""]
+    },
+    "cpu": {
+        "format": "CPU {usage}%",
+        "interval": 1,
+        "on-click": "foot -e htop"
+    },
+    "memory": {
+        "format": "RAM {used:0.1f}G/{total:0.1f}G",
+        "interval": 2
+    },
+    "clock": {
+        "format": "{:%Y-%m-%d  %H:%M:%S UTC}",
+        "timezone": "UTC",
+        "interval": 1
+    },
+    "tray": {
+        "icon-size": 16,
+        "spacing": 8
+    }
+}

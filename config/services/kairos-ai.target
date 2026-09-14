@@ -1,0 +1,8 @@
+[Unit]
+Description=KAIROS AI Reasoning & Agent Workload Target
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+Wants=kairos-agentd.service
+After=kairos-trading.target
+
+[Install]
+WantedBy=multi-user.target

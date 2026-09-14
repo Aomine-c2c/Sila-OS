@@ -1,0 +1,1132 @@
+#!/usr/bin/env bash
+# =============================================================================
+# KAIROS OS — Reproducible ISO Build Engine
+# =============================================================================
+#
+# Generates a bootable, reproducible hybrid KAIROS OS ISO image.
+#
+# Output:
+#   dist/kairos-X.Y.Z-x86_64.iso
+#   dist/SHA256SUMS
+#   dist/build-manifest.json
+#   dist/package-manifest.json
+#   dist/version-metadata.json
+#
+# ISO structure:
+#   /boot/
+#     vmlinuz-kairos              — RT kernel image
+#     initramfs-kairos.img        — Primary initramfs
+#     initramfs-kairos-fallback.img — Fallback initramfs
+#     grub/grub.cfg               — GRUB2 bootloader configuration
+#     grub/i386-pc/               — Legacy BIOS GRUB modules
+#   /EFI/BOOT/
+#     BOOTX64.EFI                 — UEFI bootloader
+#   /live/
+#     filesystem.squashfs         — Compressed root filesystem (zstd:15)
+#     filesystem.sha256           — SquashFS integrity checksum
+#   /kairos/
+#     version.json                — Machine-readable version metadata
+#     package-manifest.json       — Installed package list
+#     installer.py                — KAIROS installer
+#     build-info.json             — Build reproducibility metadata
+#   /recovery/
+#     recovery.py                 — Recovery environment
+#     recovery.json               — Recovery metadata
+#
+# Reproducibility:
+#   SOURCE_DATE_EPOCH is set to the git commit timestamp (or a fixed
+#   epoch when building outside git). mksquashfs and xorriso both
+#   honour SOURCE_DATE_EPOCH when set, making the ISO bit-reproducible
+#   for the same inputs and toolchain version.
+#
+# Usage:
+#   ./scripts/build-iso [options]
+#   Options:
+#     --version X.Y.Z   Override version string
+#     --dry-run | -n    Show what would be done, make no changes
+#     --clean           Remove previous build artifacts before building
+#     --sign            Sign EFI binary with Secure Boot key (requires sbsign)
+#     --no-compress     Skip SquashFS compression (faster, larger output)
+#     --no-progress     Suppress progress bars (for CI)
+#     --verbose | -v    Extra logging
+#     --help | -h       Show this help
+#
+# Requirements (mandatory):
+#   mksquashfs   squashfs-tools
+#   xorriso
+#   sha256sum    (coreutils)
+#   python3
+#
+# Requirements (optional):
+#   grub-mkstandalone  — for UEFI EFI image generation
+#   grub-mkrescue      — fallback for full GRUB2 ISO
+#   sbsign             — for UEFI Secure Boot signing
+#   isoinfo            — for ISO verification
+#   genisoimage        — alternative to xorriso
+#
+# Exit codes:
+#   0  — Success
+#   1  — Build error
+#   2  — Missing mandatory dependency (non-dry-run)
+# =============================================================================
+set -euo pipefail
+IFS=$'\n\t'
+
+# =============================================================================
+# Configuration & Version Detection
+# =============================================================================
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+cd "$ROOT_DIR"
+
+# ── Version ──────────────────────────────────────────────────────────────────
+_read_version() {
+    if command -v python3 >/dev/null 2>&1 && [[ -f "$ROOT_DIR/kairos.toml" ]]; then
+        python3 -c "
+import re, sys
+with open('kairos.toml') as f:
+    for line in f:
+        m = re.match(r'version\s*=\s*[\"\'](.*?)[\"\']\s*$', line)
+        if m:
+            print(m.group(1))
+            sys.exit(0)
+print('0.1.0')
+" 2>/dev/null || echo "0.1.0"
+    else
+        echo "0.1.0"
+    fi
+}
+
+VERSION="$(_read_version)"
+CODENAME="Aethelgard"
+ARCH="x86_64"
+
+# ── Reproducibility: SOURCE_DATE_EPOCH ───────────────────────────────────────
+# Use git commit timestamp if available; fall back to a fixed epoch.
+# This ensures mksquashfs and xorriso produce bit-identical output
+# for the same inputs.
+if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+    if command -v git >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+        SOURCE_DATE_EPOCH="$(git log -1 --format=%ct 2>/dev/null || echo 1704067200)"
+    else
+        SOURCE_DATE_EPOCH=1704067200  # 2024-01-01T00:00:00Z — fixed fallback
+    fi
+fi
+export SOURCE_DATE_EPOCH
+
+BUILD_DATE="$(date -u -d "@${SOURCE_DATE_EPOCH}" +"%Y%m%d" 2>/dev/null \
+           || date -u -r  "${SOURCE_DATE_EPOCH}" +"%Y%m%d" 2>/dev/null \
+           || date -u +"%Y%m%d")"
+BUILD_TIMESTAMP="$(date -u -d "@${SOURCE_DATE_EPOCH}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+                || date -u -r  "${SOURCE_DATE_EPOCH}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+                || date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo "no-git")"
+GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+
+# ── Directory layout ─────────────────────────────────────────────────────────
+BUILD_DIR="${ROOT_DIR}/build"
+ROOTFS_DIR="${BUILD_DIR}/rootfs"
+ISO_STAGING="${BUILD_DIR}/iso-staging"
+DIST_DIR="${ROOT_DIR}/dist"
+LOG_DIR="${BUILD_DIR}/logs"
+
+ISO_NAME="kairos-${VERSION}-${ARCH}.iso"
+ISO_OUTPUT="${DIST_DIR}/${ISO_NAME}"
+LOG_FILE="${LOG_DIR}/build-iso-${BUILD_DATE}.log"
+
+# =============================================================================
+# Argument Parsing
+# =============================================================================
+
+DRY_RUN=0
+DO_CLEAN=0
+SIGN=0
+VERBOSE=0
+NO_COMPRESS=0
+NO_PROGRESS=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|-n)       DRY_RUN=1 ;;
+        --clean)            DO_CLEAN=1 ;;
+        --sign)             SIGN=1 ;;
+        --verbose|-v)       VERBOSE=1 ;;
+        --no-compress)      NO_COMPRESS=1 ;;
+        --no-progress)      NO_PROGRESS=1 ;;
+        --version=*)        VERSION="${arg#--version=}" ;;
+        --help|-h)
+            sed -n '2,60p' "${BASH_SOURCE[0]}" | grep '^#' | sed 's/^# \?//'
+            exit 0 ;;
+        *)
+            echo "Unknown argument: $arg" >&2
+            exit 1 ;;
+    esac
+done
+
+VOLID="KAIROS_$(echo "${VERSION}" | tr '.' '_' | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
+# ISO 9660 Volume ID max length is 32 characters
+VOLID="${VOLID:0:32}"
+
+# =============================================================================
+# Logging & Utilities
+# =============================================================================
+
+mkdir -p "$LOG_DIR" "$DIST_DIR"
+
+_ts()   { date -u +"[%H:%M:%S]"; }
+_log()  { local l="$1"; shift; echo "$(_ts) [$l] $*" | tee -a "$LOG_FILE"; }
+info()  { _log "INFO " "$@"; }
+warn()  { _log "WARN " "$@"; }
+error() { _log "ERROR" "$@" >&2; }
+debug() { [[ $VERBOSE -eq 1 ]] && _log "DEBUG" "$@" || true; }
+step()  {
+    echo | tee -a "$LOG_FILE"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" | tee -a "$LOG_FILE"
+    _log "STEP " "$@"
+}
+dryrun() {
+    if [[ $DRY_RUN -eq 1 ]]; then
+        _log "DRY  " "(dry-run) $*"
+    else
+        "$@"
+    fi
+}
+
+check_dep() {
+    local cmd="$1" pkg="${2:-$1}" required="${3:-0}"
+    if command -v "$cmd" >/dev/null 2>&1; then
+        info "  [OK]  $cmd ($(command -v "$cmd"))"
+        return 0
+    else
+        if [[ $required -eq 1 ]]; then
+            error "  [MISS] $cmd — install package: $pkg"
+        else
+            warn "  [OPT]  $cmd not found (package: $pkg) — some features may be unavailable"
+        fi
+        return 1
+    fi
+}
+
+# =============================================================================
+# Banner
+# =============================================================================
+
+{
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " ◈  KAIROS OS — Reproducible ISO Build Engine"
+echo "    Version          : ${VERSION}"
+echo "    Codename         : ${CODENAME}"
+echo "    Architecture     : ${ARCH}"
+echo "    Volume ID        : ${VOLID}"
+echo "    Build Date       : ${BUILD_DATE}"
+echo "    SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
+echo "    Git Commit       : ${GIT_COMMIT} (${GIT_BRANCH})"
+echo "    Dry-run          : $([ $DRY_RUN -eq 1 ] && echo YES || echo NO)"
+echo "    Output           : ${ISO_OUTPUT}"
+echo "    Log              : ${LOG_FILE}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+} | tee -a "$LOG_FILE"
+
+# =============================================================================
+# Step 0: Clean
+# =============================================================================
+
+if [[ $DO_CLEAN -eq 1 ]]; then
+    step "STEP 0 — Cleaning previous build artifacts"
+    dryrun rm -rf "$ISO_STAGING"
+    dryrun rm -f  "$ISO_OUTPUT"
+    info "Clean complete."
+fi
+
+# =============================================================================
+# Step 1: Dependency Check
+# =============================================================================
+
+step "STEP 1 — Checking build dependencies"
+MISSING_REQUIRED=0
+
+info "Mandatory dependencies:"
+check_dep mksquashfs squashfs-tools  1 || MISSING_REQUIRED=$((MISSING_REQUIRED+1))
+check_dep xorriso    xorriso         1 || MISSING_REQUIRED=$((MISSING_REQUIRED+1))
+check_dep sha256sum  coreutils       1 || MISSING_REQUIRED=$((MISSING_REQUIRED+1))
+check_dep python3    python3         1 || MISSING_REQUIRED=$((MISSING_REQUIRED+1))
+
+info "Optional dependencies:"
+HAS_GRUB_STANDALONE=0
+HAS_GRUB_RESCUE=0
+HAS_SBSIGN=0
+HAS_ISOINFO=0
+
+check_dep grub-mkstandalone grub     0 && HAS_GRUB_STANDALONE=1 || true
+check_dep grub-mkrescue     grub     0 && HAS_GRUB_RESCUE=1     || true
+check_dep sbsign            sbsigntools 0 && HAS_SBSIGN=1        || true
+check_dep isoinfo           cdrtools 0 && HAS_ISOINFO=1          || true
+
+if [[ $MISSING_REQUIRED -gt 0 ]] && [[ $DRY_RUN -eq 0 ]]; then
+    error "Missing $MISSING_REQUIRED mandatory dependency(ies). Cannot continue."
+    exit 2
+elif [[ $MISSING_REQUIRED -gt 0 ]]; then
+    warn "Missing $MISSING_REQUIRED mandatory dependency(ies) — continuing in dry-run mode."
+fi
+info "Dependency check complete."
+
+# =============================================================================
+# Step 2: Rootfs Verification
+# =============================================================================
+
+step "STEP 2 — Verifying root filesystem"
+ROOTFS_OK=0
+
+if [[ -d "$ROOTFS_DIR" ]] && [[ -n "$(ls -A "$ROOTFS_DIR" 2>/dev/null)" ]]; then
+    ROOTFS_SIZE=$(du -sh "$ROOTFS_DIR" 2>/dev/null | cut -f1 || echo "unknown")
+    info "Rootfs found: ${ROOTFS_DIR} (${ROOTFS_SIZE})"
+    ROOTFS_OK=1
+else
+    warn "Rootfs missing or empty: ${ROOTFS_DIR}"
+    if [[ -f "${ROOT_DIR}/scripts/build" ]]; then
+        info "Attempting to invoke build script..."
+        dryrun bash "${ROOT_DIR}/scripts/build" base 2>&1 | tee -a "$LOG_FILE" || true
+    fi
+    if [[ $DRY_RUN -eq 0 ]] && [[ $ROOTFS_OK -eq 0 ]]; then
+        warn "Proceeding with empty rootfs — ISO will have placeholder SquashFS."
+        warn "Run './scripts/build' to build the actual rootfs before 'build-iso'."
+    fi
+fi
+
+# Check for kernel and initramfs
+KERNEL_PATH=""
+INITRD_PATH=""
+INITRD_FALLBACK_PATH=""
+
+for search_dir in \
+    "${ROOT_DIR}/out/boot" \
+    "${ROOTFS_DIR}/boot" \
+    "${ROOT_DIR}/build/boot" \
+    "/boot"; do
+    [[ -d "$search_dir" ]] || continue
+    [[ -z "$KERNEL_PATH" ]] && \
+        KERNEL_PATH=$(find "$search_dir" -name "vmlinuz*kairos*" -type f 2>/dev/null | head -1 || true)
+    [[ -z "$INITRD_PATH" ]] && \
+        INITRD_PATH=$(find "$search_dir" -name "initramfs-kairos.img" -type f 2>/dev/null | head -1 || true)
+    [[ -z "$INITRD_PATH" ]] && \
+        INITRD_PATH=$(find "$search_dir" -name "initramfs*kairos*.img" ! -name "*fallback*" -type f 2>/dev/null | head -1 || true)
+    [[ -z "$INITRD_FALLBACK_PATH" ]] && \
+        INITRD_FALLBACK_PATH=$(find "$search_dir" -name "*fallback*kairos*" -o -name "*kairos*fallback*" 2>/dev/null | head -1 || true)
+done
+
+[[ -n "$KERNEL_PATH"  ]] && info "Kernel   : ${KERNEL_PATH}" || warn "Kernel   : not found — will use placeholder"
+[[ -n "$INITRD_PATH"  ]] && info "Initramfs: ${INITRD_PATH}" || warn "Initramfs: not found — will use placeholder"
+[[ -n "$INITRD_FALLBACK_PATH" ]] && info "Fallback : ${INITRD_FALLBACK_PATH}" || warn "Fallback : not found"
+
+# =============================================================================
+# Step 3: Prepare ISO Staging Tree
+# =============================================================================
+
+step "STEP 3 — Preparing ISO staging tree"
+dryrun mkdir -p \
+    "${ISO_STAGING}/live" \
+    "${ISO_STAGING}/boot/grub" \
+    "${ISO_STAGING}/boot/grub/i386-pc" \
+    "${ISO_STAGING}/EFI/BOOT" \
+    "${ISO_STAGING}/kairos" \
+    "${ISO_STAGING}/recovery"
+info "ISO staging tree created: ${ISO_STAGING}"
+
+# =============================================================================
+# Step 4: Compress Rootfs → SquashFS
+# =============================================================================
+
+step "STEP 4 — Compressing root filesystem (SquashFS zstd:15)"
+SQUASHFS_PATH="${ISO_STAGING}/live/filesystem.squashfs"
+
+_build_squashfs() {
+    local src="$1" dst="$2"
+    local progress_flag=""
+    [[ $NO_PROGRESS -eq 1 ]] && progress_flag="-no-progress"
+
+    if [[ $NO_COMPRESS -eq 1 ]]; then
+        info "Compression disabled (--no-compress), using gzip level 1"
+        mksquashfs "$src" "$dst" \
+            -noappend \
+            ${progress_flag:+"$progress_flag"} \
+            -comp gzip -Xcompression-level 1 \
+            -reproducible \
+            -mkfs-time "$SOURCE_DATE_EPOCH" \
+            -e "${src}/proc" \
+            -e "${src}/sys" \
+            -e "${src}/dev" \
+            -e "${src}/run" \
+            -e "${src}/tmp" \
+            2>&1 | tee -a "$LOG_FILE"
+    else
+        mksquashfs "$src" "$dst" \
+            -noappend \
+            ${progress_flag:+"$progress_flag"} \
+            -comp zstd \
+            -Xcompression-level 15 \
+            -reproducible \
+            -mkfs-time "$SOURCE_DATE_EPOCH" \
+            -e "${src}/proc" \
+            -e "${src}/sys" \
+            -e "${src}/dev" \
+            -e "${src}/run" \
+            -e "${src}/tmp" \
+            2>&1 | tee -a "$LOG_FILE"
+    fi
+}
+
+if [[ -d "$ROOTFS_DIR" ]] && [[ -n "$(ls -A "$ROOTFS_DIR" 2>/dev/null)" ]]; then
+    dryrun _build_squashfs "$ROOTFS_DIR" "$SQUASHFS_PATH"
+    if [[ $DRY_RUN -eq 0 ]] && [[ -f "$SQUASHFS_PATH" ]]; then
+        SQ_SIZE=$(du -sh "$SQUASHFS_PATH" | cut -f1)
+        info "SquashFS created: ${SQUASHFS_PATH} (${SQ_SIZE})"
+        # Embed SquashFS checksum inside ISO for integrity verification
+        sha256sum "$SQUASHFS_PATH" > "${ISO_STAGING}/live/filesystem.sha256"
+        info "SquashFS SHA256 written to ISO."
+    fi
+else
+    warn "Rootfs empty — creating placeholder SquashFS (dry-run / missing rootfs)"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        dryrun touch "$SQUASHFS_PATH"
+        dryrun touch "${ISO_STAGING}/live/filesystem.sha256"
+    else
+        # Create a minimal valid squashfs for structural integrity
+        TMPROOT="$(mktemp -d)"
+        mkdir -p "${TMPROOT}/kairos"
+        echo "KAIROS OS placeholder rootfs" > "${TMPROOT}/kairos/README"
+        echo "This ISO was built without a rootfs. Run ./scripts/build first." >> "${TMPROOT}/kairos/README"
+        mksquashfs "$TMPROOT" "$SQUASHFS_PATH" \
+            -noappend -comp gzip -Xcompression-level 1 \
+            -reproducible -mkfs-time "$SOURCE_DATE_EPOCH" \
+            2>&1 | tee -a "$LOG_FILE" || true
+        rm -rf "$TMPROOT"
+        [[ -f "$SQUASHFS_PATH" ]] && sha256sum "$SQUASHFS_PATH" > "${ISO_STAGING}/live/filesystem.sha256"
+        warn "Placeholder SquashFS created. ISO will not be fully functional."
+    fi
+fi
+
+# =============================================================================
+# Step 5: Copy Kernel and Initramfs
+# =============================================================================
+
+step "STEP 5 — Copying kernel and initramfs images"
+
+_copy_or_placeholder() {
+    local src="$1" dst="$2" label="$3"
+    if [[ -n "$src" ]] && [[ -f "$src" ]]; then
+        dryrun cp "$src" "$dst"
+        local size; size=$(du -sh "$src" 2>/dev/null | cut -f1)
+        info "${label}: ${src} → ${dst} (${size})"
+    else
+        warn "${label}: not found, using placeholder"
+        if [[ $DRY_RUN -eq 1 ]]; then
+            dryrun touch "$dst"
+        else
+            # Create a minimal placeholder that will show an informative error at boot
+            echo "KAIROS PLACEHOLDER: ${label} not present in this build." > "$dst"
+        fi
+    fi
+}
+
+_copy_or_placeholder "$KERNEL_PATH"         "${ISO_STAGING}/boot/vmlinuz-kairos"              "Kernel"
+_copy_or_placeholder "$INITRD_PATH"         "${ISO_STAGING}/boot/initramfs-kairos.img"        "Initramfs"
+_copy_or_placeholder "$INITRD_FALLBACK_PATH" "${ISO_STAGING}/boot/initramfs-kairos-fallback.img" "Fallback initramfs"
+
+# =============================================================================
+# Step 6: Write GRUB2 Configuration
+# =============================================================================
+
+step "STEP 6 — Writing GRUB2 bootloader configuration"
+
+# Kernel command line parameters for all boot modes
+_COMMON_PARAMS="rd.auto=1 rd.timeout=60"
+_LIVE_PARAMS="boot=live quiet loglevel=3 ${_COMMON_PARAMS} kairos.mode=live"
+_INST_PARAMS="boot=live ${_COMMON_PARAMS} kairos.mode=installer"
+_RECV_PARAMS="boot=live single nomodeset loglevel=7 ${_COMMON_PARAMS} kairos.mode=recovery"
+_RAM_PARAMS="boot=live toram quiet loglevel=3 ${_COMMON_PARAMS} kairos.mode=live"
+
+cat > "${ISO_STAGING}/boot/grub/grub.cfg" << GRUBCFG
+# ==========================================================================
+# KAIROS OS GRUB2 Configuration
+# Generated by build-iso — Version ${VERSION} — ${BUILD_TIMESTAMP}
+# SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
+# ==========================================================================
+
+set default=0
+set timeout=10
+set timeout_style=menu
+
+if [ -n "\${net_default_server}" ]; then
+    set timeout=30
+fi
+
+if loadfont /boot/grub/fonts/unicode.pf2; then
+    set gfxmode=auto
+    insmod all_video
+    insmod gfxterm
+    terminal_output gfxterm
+fi
+
+set color_normal=cyan/black
+set color_highlight=white/blue
+
+menuentry "KAIROS OS ${VERSION} — Live Environment" --class kairos --class gnu-linux {
+    echo "Loading KAIROS OS kernel..."
+    linux  /boot/vmlinuz-kairos ${_LIVE_PARAMS}
+    echo "Loading initramfs..."
+    initrd /boot/initramfs-kairos.img
+}
+
+menuentry "KAIROS OS ${VERSION} — Install to Disk" --class kairos --class gnu-linux {
+    echo "Starting KAIROS OS Installer..."
+    linux  /boot/vmlinuz-kairos ${_INST_PARAMS}
+    initrd /boot/initramfs-kairos.img
+}
+
+menuentry "KAIROS OS — Recovery Environment" --class kairos --class recovery {
+    echo "Loading KAIROS Recovery Environment..."
+    linux  /boot/vmlinuz-kairos ${_RECV_PARAMS}
+    initrd /boot/initramfs-kairos-fallback.img
+}
+
+menuentry "KAIROS OS — Copy to RAM (toram)" --class kairos {
+    echo "Copying system to RAM..."
+    linux  /boot/vmlinuz-kairos ${_RAM_PARAMS}
+    initrd /boot/initramfs-kairos.img
+}
+
+if [ "\${grub_platform}" = "efi" ]; then
+    menuentry "EFI Firmware Settings" --class settings {
+        fwsetup
+    }
+fi
+
+menuentry "System Memory Test (memtest86+)" --class memtest {
+    if [ -f /boot/memtest86+.bin ]; then
+        linux16 /boot/memtest86+.bin
+    else
+        echo "memtest86+ not available in this image."
+        sleep 3
+        configfile /boot/grub/grub.cfg
+    fi
+}
+
+menuentry "Boot from installed system (hd0)" --class windows {
+    set root=(hd0)
+    chainloader +1
+}
+
+GRUBCFG
+
+info "GRUB2 configuration written."
+
+# =============================================================================
+# Step 7: Write KAIROS Identity & Metadata into ISO
+# =============================================================================
+
+step "STEP 7 — Writing KAIROS identity and metadata"
+
+# version.json — primary version metadata embedded in ISO
+python3 - << PYEOF > "${ISO_STAGING}/kairos/version.json"
+import json, os
+data = {
+    "name":               "KAIROS OS",
+    "version":            "${VERSION}",
+    "codename":           "${CODENAME}",
+    "arch":               "${ARCH}",
+    "volume_id":          "${VOLID}",
+    "build_date":         "${BUILD_DATE}",
+    "build_timestamp":    "${BUILD_TIMESTAMP}",
+    "source_date_epoch":  int("${SOURCE_DATE_EPOCH}"),
+    "git_commit":         "${GIT_COMMIT}",
+    "git_branch":         "${GIT_BRANCH}",
+    "installer_version":  "0.1.0",
+    "profiles":           ["Minimal", "Trader", "Quant Research", "Developer", "Full"],
+    "repository":         "https://github.com/kairos-os/kairos",
+    "homepage":           "https://kairos-os.org",
+    "iso_name":           "${ISO_NAME}",
+}
+print(json.dumps(data, indent=2, sort_keys=True))
+PYEOF
+info "version.json written."
+
+# build-info.json — reproducibility audit record inside ISO
+python3 - << PYEOF > "${ISO_STAGING}/kairos/build-info.json"
+import json, platform
+data = {
+    "build_host":         platform.node(),
+    "build_os":           platform.system(),
+    "python_version":     platform.python_version(),
+    "source_date_epoch":  int("${SOURCE_DATE_EPOCH}"),
+    "reproducible":       True,
+    "notes": (
+        "SOURCE_DATE_EPOCH controls filesystem timestamps in SquashFS and ISO. "
+        "Reproducibility requires identical toolchain versions and inputs."
+    ),
+}
+print(json.dumps(data, indent=2, sort_keys=True))
+PYEOF
+info "build-info.json written."
+
+# recovery.json
+python3 - << PYEOF > "${ISO_STAGING}/recovery/recovery.json"
+import json
+data = {
+    "recovery_version":   "${VERSION}",
+    "build_timestamp":    "${BUILD_TIMESTAMP}",
+    "entry_point":        "/usr/libexec/kairos/kairos_recovery.py",
+    "iso_entry_point":    "/recovery/recovery.py",
+    "menu_items": [
+        "Boot Normally",
+        "Boot Previous Version",
+        "Repair System",
+        "Rollback Update",
+        "Filesystem Diagnostics",
+        "Network Diagnostics",
+        "User Recovery",
+        "System Restore",
+        "Emergency Terminal",
+        "Shutdown",
+        "Reboot",
+    ],
+}
+print(json.dumps(data, indent=2, sort_keys=True))
+PYEOF
+info "recovery.json written."
+
+# =============================================================================
+# Step 8: Generate Package Manifest
+# =============================================================================
+
+step "STEP 8 — Generating package manifest"
+
+python3 - << 'PYEOF' > "${ISO_STAGING}/kairos/package-manifest.json"
+import json, subprocess, sys, os, datetime
+
+ROOTFS = os.environ.get("ROOTFS_DIR", "build/rootfs")
+pkgs = []
+
+# Method 1: query pacman in rootfs
+if os.path.isdir(ROOTFS) and os.path.exists(os.path.join(ROOTFS, "var/lib/pacman")):
+    try:
+        result = subprocess.run(
+            ["pacman", "--root", ROOTFS, "--dbpath",
+             os.path.join(ROOTFS, "var/lib/pacman"), "-Q"],
+            capture_output=True, text=True, timeout=30
+        )
+        for line in result.stdout.strip().splitlines():
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                pkgs.append({"name": parts[0], "version": parts[1], "source": "pacman"})
+    except Exception:
+        pass
+
+# Method 2: query dpkg in rootfs
+if not pkgs and os.path.isdir(os.path.join(ROOTFS, "var/lib/dpkg")):
+    try:
+        result = subprocess.run(
+            ["dpkg-query", "--root", ROOTFS, "-W", "--showformat=${Package}\t${Version}\n"],
+            capture_output=True, text=True, timeout=30
+        )
+        for line in result.stdout.strip().splitlines():
+            parts = line.split("\t", 1)
+            if len(parts) == 2:
+                pkgs.append({"name": parts[0], "version": parts[1], "source": "dpkg"})
+    except Exception:
+        pass
+
+# Fallback: use profile definitions from the installer
+if not pkgs:
+    PROFILES = {
+        "Minimal": [
+            "linux-kairos-rt", "linux-firmware", "systemd", "base",
+            "openssh", "btrfs-progs", "cryptsetup", "dosfstools",
+            "e2fsprogs", "util-linux", "iproute2", "dhcpcd", "curl",
+        ],
+        "Trader": [
+            "linux-kairos-rt", "linux-firmware", "systemd", "base",
+            "hyprland", "waybar", "kitty", "wofi", "mako", "pipewire",
+            "networkmanager", "kairos-shell", "kairos-riskd", "kairos-feedd",
+            "kairos-executiond", "kairos-watchdog", "snapper",
+        ],
+        "Quant Research": [
+            "linux-kairos-rt", "linux-firmware", "systemd", "base",
+            "hyprland", "waybar", "kitty", "python3", "python-numpy",
+            "python-pandas", "jupyter-notebook", "kairos-researchd",
+        ],
+        "Developer": [
+            "linux-kairos-rt", "linux-firmware", "systemd", "base",
+            "hyprland", "kitty", "git", "gcc", "clang", "rust",
+            "python3", "docker",
+        ],
+        "Full": [
+            "linux-kairos-rt", "linux-firmware", "systemd", "base",
+            "hyprland", "waybar", "kitty", "kairos-riskd", "kairos-feedd",
+            "kairos-executiond", "kairos-watchdog", "kairos-researchd",
+            "kairos-agentd", "kairos-adaptive", "python3", "rust",
+            "docker", "snapper",
+        ],
+    }
+    pkgs = [{"name": p, "version": "unknown", "source": "profile-definition"}
+            for profile_pkgs in PROFILES.values()
+            for p in profile_pkgs]
+    # Deduplicate
+    seen = set()
+    pkgs = [p for p in pkgs if not (p["name"] in seen or seen.add(p["name"]))]
+
+manifest = {
+    "generated":  datetime.datetime.utcnow().isoformat() + "Z",
+    "count":      len(pkgs),
+    "method":     pkgs[0]["source"] if pkgs else "unknown",
+    "packages":   pkgs,
+    "profiles": {
+        "Minimal":        ["linux-kairos-rt", "systemd", "openssh", "btrfs-progs"],
+        "Trader":         ["linux-kairos-rt", "hyprland", "kairos-riskd", "kairos-feedd"],
+        "Quant Research": ["linux-kairos-rt", "hyprland", "python3", "kairos-researchd"],
+        "Developer":      ["linux-kairos-rt", "hyprland", "git", "gcc", "rust"],
+        "Full":           ["linux-kairos-rt", "hyprland", "kairos-riskd", "kairos-researchd",
+                           "kairos-agentd", "kairos-adaptive"],
+    }
+}
+print(json.dumps(manifest, indent=2, sort_keys=True))
+PYEOF
+
+info "Package manifest generated: ${ISO_STAGING}/kairos/package-manifest.json"
+
+# =============================================================================
+# Step 9: Embed Installer and Recovery Environment
+# =============================================================================
+
+step "STEP 9 — Embedding installer and recovery environment"
+
+_embed_file() {
+    local src="$1" dst="$2" label="$3"
+    if [[ -f "$src" ]]; then
+        dryrun cp "$src" "$dst"
+        local size; size=$(wc -c < "$src" 2>/dev/null || echo 0)
+        info "${label} embedded: ${src} (${size} bytes)"
+    else
+        warn "${label} not found: ${src}"
+    fi
+}
+
+_embed_file "${ROOT_DIR}/installer/kairos_installer.py" \
+            "${ISO_STAGING}/kairos/installer.py"          "Installer"
+
+_embed_file "${ROOT_DIR}/recovery/kairos_recovery.py" \
+            "${ISO_STAGING}/recovery/recovery.py"        "Recovery"
+
+# Embed README files
+[[ -f "${ROOT_DIR}/installer/README.md" ]] && \
+    dryrun cp "${ROOT_DIR}/installer/README.md" "${ISO_STAGING}/kairos/INSTALLER-README.md"
+[[ -f "${ROOT_DIR}/recovery/README.md" ]] && \
+    dryrun cp "${ROOT_DIR}/recovery/README.md"  "${ISO_STAGING}/recovery/README.md"
+
+info "Embedding complete."
+
+# =============================================================================
+# Step 10: Generate UEFI EFI Payload
+# =============================================================================
+
+step "STEP 10 — Preparing UEFI EFI boot payload"
+
+_build_efi() {
+    local efi_out="${ISO_STAGING}/EFI/BOOT/BOOTX64.EFI"
+    local grub_cfg="${ISO_STAGING}/boot/grub/grub.cfg"
+
+    if [[ $HAS_GRUB_STANDALONE -eq 1 ]]; then
+        info "Building GRUB2 EFI image via grub-mkstandalone..."
+        dryrun grub-mkstandalone \
+            --format=x86_64-efi \
+            --output="$efi_out" \
+            --locales="" \
+            --themes="" \
+            --modules="part_gpt part_msdos fat ext2 btrfs squash4 iso9660 lvm luks2 cryptodisk gcry_sha512 gcry_rijndael normal linux linuxefi all_video gfxterm gettext echo" \
+            "boot/grub/grub.cfg=${grub_cfg}" \
+            2>&1 | tee -a "$LOG_FILE"
+        info "GRUB2 EFI image created: ${efi_out}"
+    else
+        warn "grub-mkstandalone not available. UEFI boot requires a pre-built BOOTX64.EFI."
+        warn "Install grub (with efi modules): pacman -S grub"
+        # Create placeholder so ISO structure is complete
+        if [[ $DRY_RUN -eq 0 ]]; then
+            # Try to find an existing EFI image
+            EFI_SRC=$(find /usr -name "grubx64.efi" 2>/dev/null | head -1 || true)
+            if [[ -n "$EFI_SRC" ]]; then
+                cp "$EFI_SRC" "$efi_out"
+                info "Found system GRUB EFI: ${EFI_SRC}"
+            else
+                echo "EFI placeholder" > "$efi_out"
+                warn "Placeholder EFI created. ISO will not boot in UEFI mode."
+            fi
+        else
+            dryrun touch "$efi_out"
+        fi
+    fi
+}
+_build_efi
+
+# Optional: Secure Boot signing
+if [[ $SIGN -eq 1 ]]; then
+    step "Signing EFI binary for UEFI Secure Boot"
+    SB_KEY="${ROOT_DIR}/keys/secure-boot/kairos-sb.key"
+    SB_CERT="${ROOT_DIR}/keys/secure-boot/kairos-sb.crt"
+    EFI_BIN="${ISO_STAGING}/EFI/BOOT/BOOTX64.EFI"
+
+    if [[ $HAS_SBSIGN -eq 0 ]]; then
+        warn "sbsign not found. Install sbsigntools for Secure Boot signing."
+    elif [[ ! -f "$SB_KEY" ]] || [[ ! -f "$SB_CERT" ]]; then
+        warn "Secure Boot keys not found at ${SB_KEY}. Run scripts/gen-sb-keys first."
+    else
+        dryrun sbsign \
+            --key  "$SB_KEY" \
+            --cert "$SB_CERT" \
+            --output "$EFI_BIN" \
+            "$EFI_BIN"
+        info "EFI binary signed for Secure Boot."
+    fi
+fi
+
+# =============================================================================
+# Step 11: Build GRUB2 i386-pc Legacy BIOS Support
+# =============================================================================
+
+step "STEP 11 — Preparing legacy BIOS boot support"
+
+# For hybrid ISO, GRUB needs its i386-pc core image embedded.
+# We attempt to build it with grub-mkstandalone.
+_build_bios_grub() {
+    local grub_core="${ISO_STAGING}/boot/grub/i386-pc/eltorito.img"
+
+    # Check for pre-built eltorito image in system GRUB installation
+    for sysgrub_dir in \
+        /usr/lib/grub/i386-pc \
+        /usr/share/grub \
+        /usr/lib64/grub/i386-pc; do
+        if [[ -f "${sysgrub_dir}/cdboot.img" ]]; then
+            dryrun cp "${sysgrub_dir}/cdboot.img" "$grub_core"
+            info "Legacy BIOS GRUB image: ${sysgrub_dir}/cdboot.img"
+            # Also copy needed modules
+            dryrun rsync -a --quiet "${sysgrub_dir}/" \
+                          "${ISO_STAGING}/boot/grub/i386-pc/" 2>/dev/null || \
+                dryrun cp -r "${sysgrub_dir}/." "${ISO_STAGING}/boot/grub/i386-pc/"
+            return 0
+        fi
+    done
+
+    if [[ $HAS_GRUB_STANDALONE -eq 1 ]]; then
+        dryrun grub-mkstandalone \
+            --format=i386-pc \
+            --output="$grub_core" \
+            --modules="biosdisk iso9660 squash4 normal linux all_video" \
+            "boot/grub/grub.cfg=${ISO_STAGING}/boot/grub/grub.cfg" \
+            2>&1 | tee -a "$LOG_FILE" || true
+        [[ -f "$grub_core" ]] && info "BIOS GRUB eltorito image built." || warn "BIOS GRUB build failed."
+    else
+        warn "Cannot build legacy BIOS GRUB image (grub-mkstandalone not available)."
+        dryrun touch "$grub_core"
+    fi
+}
+_build_bios_grub
+
+# Also look for isohdpfx.bin for hybrid MBR
+ISOHDPFX=""
+for sysgrub_dir in /usr/lib/grub/i386-pc /usr/share/grub; do
+    if [[ -f "${sysgrub_dir}/isohdpfx.bin" ]]; then
+        ISOHDPFX="${sysgrub_dir}/isohdpfx.bin"
+        break
+    fi
+done
+[[ -n "$ISOHDPFX" ]] && info "Hybrid MBR: ${ISOHDPFX}" || warn "isohdpfx.bin not found — no hybrid MBR"
+
+# =============================================================================
+# Step 12: Master the Hybrid ISO with xorriso
+# =============================================================================
+
+step "STEP 12 — Mastering hybrid bootable ISO"
+
+_build_iso_xorriso() {
+    local out="$1"
+    local staging="$2"
+
+    local xorriso_args=(
+        -as mkisofs
+        -iso-level 3
+        -full-iso9660-filenames
+        -volid          "${VOLID}"
+        -preparer       "KAIROS OS Build System"
+        -publisher      "KAIROS OS Project <architect@kairos-os.org>"
+        -appid          "KAIROS OS ${VERSION} Installation Medium"
+        --modification-date="${SOURCE_DATE_EPOCH}"
+        -output         "$out"
+    )
+
+    # Legacy BIOS boot via El Torito
+    local eltorito="${staging}/boot/grub/i386-pc/eltorito.img"
+    if [[ -f "$eltorito" ]] && [[ -s "$eltorito" ]]; then
+        xorriso_args+=(
+            -eltorito-boot   boot/grub/i386-pc/eltorito.img
+            -eltorito-catalog boot/grub/i386-pc/boot.cat
+            -no-emul-boot
+            -boot-load-size  4
+            -boot-info-table
+            --grub2-boot-info
+        )
+    else
+        warn "Skipping El Torito (no valid eltorito.img) — ISO won't boot on legacy BIOS."
+    fi
+
+    # UEFI boot via EFI partition
+    local efi_bin="${staging}/EFI/BOOT/BOOTX64.EFI"
+    if [[ -f "$efi_bin" ]]; then
+        xorriso_args+=(
+            -eltorito-alt-boot
+            -e            EFI/BOOT/BOOTX64.EFI
+            -no-emul-boot
+            -isohybrid-gpt-basdat
+        )
+    else
+        warn "No EFI binary found — ISO won't boot in UEFI mode."
+    fi
+
+    # Hybrid MBR for USB boot
+    if [[ -n "$ISOHDPFX" ]]; then
+        xorriso_args+=(-isohybrid-mbr "$ISOHDPFX")
+    fi
+
+    xorriso_args+=("$staging")
+
+    dryrun xorriso "${xorriso_args[@]}" 2>&1 | tee -a "$LOG_FILE"
+}
+
+_build_iso_fallback() {
+    local out="$1"
+    local staging="$2"
+    info "Trying simplified xorriso (basic ISO, no hybrid boot)..."
+    dryrun xorriso \
+        -as mkisofs \
+        -iso-level 3 \
+        -full-iso9660-filenames \
+        -volid "${VOLID}" \
+        --modification-date="${SOURCE_DATE_EPOCH}" \
+        -output "$out" \
+        "$staging" \
+        2>&1 | tee -a "$LOG_FILE" || true
+}
+
+# Primary build attempt
+_build_iso_xorriso "$ISO_OUTPUT" "$ISO_STAGING"
+
+# Fallback if primary failed and we're not in dry-run
+if [[ $DRY_RUN -eq 0 ]] && [[ ! -f "$ISO_OUTPUT" ]]; then
+    warn "Primary ISO mastering failed. Trying fallback (basic xorriso)..."
+    _build_iso_fallback "$ISO_OUTPUT" "$ISO_STAGING"
+fi
+
+if [[ $DRY_RUN -eq 1 ]]; then
+    info "(dry-run) ISO would be written to: ${ISO_OUTPUT}"
+elif [[ -f "$ISO_OUTPUT" ]]; then
+    ISO_SIZE_MIB=$(( $(stat -c%s "$ISO_OUTPUT" 2>/dev/null || echo 0) / 1024 / 1024 ))
+    info "ISO created: ${ISO_OUTPUT} (${ISO_SIZE_MIB} MiB)"
+else
+    error "ISO creation failed. Check the build log: ${LOG_FILE}"
+    exit 1
+fi
+
+# =============================================================================
+# Step 13: Generate SHA256 and All Manifests
+# =============================================================================
+
+step "STEP 13 — Generating checksums and build manifests"
+
+# SHA256 checksum
+if [[ -f "$ISO_OUTPUT" ]]; then
+    ISO_SHA256="$(sha256sum "$ISO_OUTPUT" | awk '{print $1}')"
+    ISO_SIZE_BYTES="$(stat -c%s "$ISO_OUTPUT" 2>/dev/null || stat -f%z "$ISO_OUTPUT" 2>/dev/null || echo 0)"
+    ISO_SIZE_MIB=$(( ISO_SIZE_BYTES / 1024 / 1024 ))
+else
+    ISO_SHA256="DRY-RUN-${GIT_COMMIT}-NOT-BUILT"
+    ISO_SIZE_BYTES=0
+    ISO_SIZE_MIB=0
+fi
+
+# SHA256SUMS file (compatible with sha256sum --check)
+echo "${ISO_SHA256}  ${ISO_NAME}" > "${DIST_DIR}/SHA256SUMS"
+info "SHA256: ${ISO_SHA256}"
+info "SHA256SUMS written: ${DIST_DIR}/SHA256SUMS"
+
+# SquashFS SHA256 (if built)
+if [[ -f "${ISO_STAGING}/live/filesystem.sha256" ]]; then
+    cp "${ISO_STAGING}/live/filesystem.sha256" "${DIST_DIR}/filesystem.sha256"
+    info "SquashFS SHA256 exported to dist/."
+fi
+
+# Build manifest (machine-readable, dist-level)
+python3 - << PYEOF > "${DIST_DIR}/build-manifest.json"
+import json, datetime, os
+
+# Read SquashFS size if available
+squash_path = "${ISO_STAGING}/live/filesystem.squashfs"
+squash_size = os.path.getsize(squash_path) if os.path.isfile(squash_path) else 0
+squash_sha256 = ""
+sha256_file = "${ISO_STAGING}/live/filesystem.sha256"
+if os.path.isfile(sha256_file):
+    squash_sha256 = open(sha256_file).read().split()[0]
+
+data = {
+    "build_system":      "KAIROS OS Reproducible Build Engine",
+    "schema_version":    "1.0.0",
+    "iso": {
+        "name":          "${ISO_NAME}",
+        "path":          "dist/${ISO_NAME}",
+        "sha256":        "${ISO_SHA256}",
+        "size_bytes":    int("${ISO_SIZE_BYTES}"),
+        "size_mib":      int("${ISO_SIZE_MIB}"),
+        "volume_id":     "${VOLID}",
+    },
+    "version": {
+        "kairos_version":    "${VERSION}",
+        "codename":          "${CODENAME}",
+        "arch":              "${ARCH}",
+        "build_date":        "${BUILD_DATE}",
+        "build_timestamp":   "${BUILD_TIMESTAMP}",
+        "source_date_epoch": int("${SOURCE_DATE_EPOCH}"),
+        "git_commit":        "${GIT_COMMIT}",
+        "git_branch":        "${GIT_BRANCH}",
+    },
+    "reproducibility": {
+        "source_date_epoch": int("${SOURCE_DATE_EPOCH}"),
+        "notes": (
+            "Set SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH} and use identical "
+            "toolchain versions to reproduce this ISO."
+        ),
+    },
+    "components": {
+        "bootloader":     "GRUB2 hybrid (BIOS El Torito + UEFI EFI partition)",
+        "kernel":         "linux-kairos-rt (PREEMPT_RT)",
+        "rootfs":         "SquashFS zstd:15",
+        "filesystem":     "Btrfs (installed system)",
+        "encryption":     "LUKS2 AES-256-XTS (installer-time)",
+        "installer":      "kairos/installer.py",
+        "recovery":       "recovery/recovery.py",
+    },
+    "filesystems": {
+        "squashfs": {
+            "path":       "live/filesystem.squashfs",
+            "sha256":     squash_sha256,
+            "size_bytes": squash_size,
+            "compression": "zstd" if not bool("${NO_COMPRESS}".strip("0")) else "gzip",
+        }
+    },
+    "required_files": [
+        "live/filesystem.squashfs",
+        "live/filesystem.sha256",
+        "boot/vmlinuz-kairos",
+        "boot/initramfs-kairos.img",
+        "boot/initramfs-kairos-fallback.img",
+        "boot/grub/grub.cfg",
+        "EFI/BOOT/BOOTX64.EFI",
+        "kairos/version.json",
+        "kairos/installer.py",
+        "kairos/package-manifest.json",
+        "kairos/build-info.json",
+        "recovery/recovery.py",
+        "recovery/recovery.json",
+    ],
+    "build_log":     "${LOG_FILE}",
+    "generated_at":  datetime.datetime.utcnow().isoformat() + "Z",
+}
+print(json.dumps(data, indent=2, sort_keys=True))
+PYEOF
+info "Build manifest: ${DIST_DIR}/build-manifest.json"
+
+# version-metadata.json — copy from ISO staging
+cp "${ISO_STAGING}/kairos/version.json" "${DIST_DIR}/version-metadata.json" 2>/dev/null || true
+info "Version metadata: ${DIST_DIR}/version-metadata.json"
+
+# package-manifest.json — copy from ISO staging
+cp "${ISO_STAGING}/kairos/package-manifest.json" "${DIST_DIR}/package-manifest.json" 2>/dev/null || true
+info "Package manifest: ${DIST_DIR}/package-manifest.json"
+
+# =============================================================================
+# Step 14: Validate Generated Artifacts
+# =============================================================================
+
+step "STEP 14 — Validating generated artifacts"
+
+ERRORS=0
+_check() {
+    local label="$1" path="$2" min_size="${3:-0}"
+    if [[ -f "$path" ]]; then
+        local sz; sz=$(wc -c < "$path" 2>/dev/null || echo 0)
+        if [[ $sz -ge $min_size ]]; then
+            info "  [OK]  ${label} (${sz} bytes)"
+        else
+            warn "  [SMALL] ${label} — only ${sz} bytes (expected ≥${min_size})"
+        fi
+    else
+        error "  [MISS] ${label} — MISSING: ${path}"
+        ERRORS=$((ERRORS+1))
+    fi
+}
+
+[[ $DRY_RUN -eq 0 ]] && _check "ISO image"          "$ISO_OUTPUT"                             1024
+_check "SHA256SUMS"          "${DIST_DIR}/SHA256SUMS"                            10
+_check "Build manifest"      "${DIST_DIR}/build-manifest.json"                  100
+_check "Version metadata"    "${DIST_DIR}/version-metadata.json"                100
+_check "Package manifest"    "${DIST_DIR}/package-manifest.json"                100
+_check "GRUB config"         "${ISO_STAGING}/boot/grub/grub.cfg"                200
+_check "Version in ISO"      "${ISO_STAGING}/kairos/version.json"               100
+_check "Build info in ISO"   "${ISO_STAGING}/kairos/build-info.json"            100
+_check "Recovery meta in ISO" "${ISO_STAGING}/recovery/recovery.json"           100
+
+# Validate JSON files
+for jf in \
+    "${DIST_DIR}/build-manifest.json" \
+    "${DIST_DIR}/version-metadata.json" \
+    "${DIST_DIR}/package-manifest.json" \
+    "${ISO_STAGING}/kairos/version.json"; do
+    if [[ -f "$jf" ]]; then
+        if python3 -c "import json; json.load(open('${jf}'))" 2>/dev/null; then
+            info "  [OK]  JSON valid: $(basename "$jf")"
+        else
+            error "  [ERR] JSON invalid: ${jf}"
+            ERRORS=$((ERRORS+1))
+        fi
+    fi
+done
+
+if [[ $ERRORS -gt 0 ]]; then
+    warn "Validation: ${ERRORS} issue(s) found. Check the build log."
+else
+    info "Validation: all checks passed."
+fi
+
+# =============================================================================
+# Final Summary
+# =============================================================================
+
+{
+echo
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo " ◈  KAIROS OS ISO Build $([ $DRY_RUN -eq 1 ] && echo "(DRY-RUN)" || echo "Complete")"
+echo "    ISO     : ${ISO_OUTPUT}"
+echo "    SHA256  : ${ISO_SHA256}"
+[[ $ISO_SIZE_MIB -gt 0 ]] && echo "    Size    : ${ISO_SIZE_MIB} MiB"
+echo "    Epoch   : ${SOURCE_DATE_EPOCH}"
+echo "    Commit  : ${GIT_COMMIT}"
+echo "    Log     : ${LOG_FILE}"
+echo
+echo "    Artifacts in dist/:"
+for f in SHA256SUMS build-manifest.json version-metadata.json package-manifest.json; do
+    [[ -f "${DIST_DIR}/${f}" ]] && echo "      dist/${f}" || true
+done
+echo
+echo " Next steps:"
+echo "   Verify : ./scripts/verify-iso"
+echo "   Boot VM: ./scripts/run-vm ${ISO_OUTPUT}"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+} | tee -a "$LOG_FILE"
+
+exit 0

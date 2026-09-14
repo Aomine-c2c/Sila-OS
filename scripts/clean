@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# KAIROS Clean Build Operator
+# Safely removes build artifacts, temporary caches, and resets directory trees.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+
+MODE="${1:-all}"
+
+echo "================================================================================"
+echo " ◈ KAIROS OS Clean Build Operator"
+echo " Mode: ${MODE}"
+echo "================================================================================"
+
+case "$MODE" in
+    cache)
+        echo "[*] Cleaning temporary Python bytecache and temporary logs..."
+        find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+        find . -type f -name "*.pyc" -delete 2>/dev/null || true
+        rm -rf build/logs/* 2>/dev/null || true
+        ;;
+    build)
+        echo "[*] Purging build/ staging rootfs and intermediate files..."
+        rm -rf build/rootfs/* build/iso/* 2>/dev/null || true
+        ;;
+    out)
+        echo "[*] Purging out/ release directory..."
+        rm -rf out/* 2>/dev/null || true
+        ;;
+    all)
+        echo "[*] Executing complete clean: removing build/ and out/ artifacts..."
+        rm -rf build out
+        find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+        find . -type f -name "*.pyc" -delete 2>/dev/null || true
+        mkdir -p build/rootfs build/iso build/logs out/iso out/release out/packages
+        ;;
+    *)
+        echo "[!] Unknown clean mode '$MODE'. Supported: cache, build, out, all."
+        exit 1
+        ;;
+esac
+
+echo "[+] Clean operation '${MODE}' completed successfully."

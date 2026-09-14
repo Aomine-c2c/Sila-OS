@@ -1,0 +1,8 @@
+[Unit]
+Description=KAIROS Quantitative Research Workspace Target
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+Wants=kairos-researchd.service
+After=kairos-system.target
+
+[Install]
+WantedBy=multi-user.target

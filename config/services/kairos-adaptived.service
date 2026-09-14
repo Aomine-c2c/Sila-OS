@@ -1,0 +1,21 @@
+[Unit]
+Description=KAIROS Adaptive Evolution Intelligence Daemon
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+After=kairos-watchdog.service kairos-sysd.service
+PartOf=kairos-adaptive.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /usr/libexec/kairos/kairos-adaptived.py
+Restart=always
+RestartSec=2s
+# Resource Limits & Isolation: Clamped to safe ceiling
+MemoryMax=512M
+CPUQuota=50%
+ProtectHome=yes
+RuntimeDirectory=kairos
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,881 @@
+#!/usr/bin/env bash
+# =============================================================================
+# KAIROS OS — ISO Verification Script
+# =============================================================================
+#
+# Verifies a KAIROS ISO image for:
+#   1.  ISO file existence and minimum size
+#   2.  SHA256 checksum integrity (computed vs. SHA256SUMS)
+#   3.  ISO internal structure (volume ID, file listing)
+#   4.  Required files presence (8 mandatory, 5 recommended)
+#   5.  Bootloader configuration integrity (GRUB2 entries)
+#   6.  EFI binary presence
+#   7.  SquashFS integrity (embedded .sha256 verification)
+#   8.  Installer embedding and Python syntax
+#   9.  Recovery environment embedding and Python syntax
+#  10.  Version metadata JSON consistency (ISO ↔ dist/)
+#  11.  Build manifest presence and JSON validity
+#  12.  Package manifest presence and JSON validity
+#  13.  Reproducibility metadata (SOURCE_DATE_EPOCH present)
+#
+# Usage:
+#   ./scripts/verify-iso [path/to/kairos.iso] [options]
+#   ./scripts/verify-iso          (auto-detects latest ISO in dist/)
+#
+#   Options:
+#     --json             Emit machine-readable JSON result to stdout
+#     --strict           Treat warnings as failures
+#     --no-mount         Skip ISO mount checks (for non-root environments)
+#     --quiet | -q       Suppress per-check output, only print summary
+#     --help | -h        Show this help
+#
+# Exit codes:
+#   0 — All checks passed (warnings are acceptable)
+#   1 — One or more checks FAILED
+#   2 — ISO file not found or unreadable
+#   3 — Usage error
+# =============================================================================
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+cd "$ROOT_DIR"
+
+# =============================================================================
+# Argument Parsing
+# =============================================================================
+
+ISO_PATH=""
+JSON_OUT=0
+STRICT=0
+NO_MOUNT=0
+QUIET=0
+
+for arg in "$@"; do
+    case "$arg" in
+        --json)         JSON_OUT=1 ;;
+        --strict)       STRICT=1 ;;
+        --no-mount)     NO_MOUNT=1 ;;
+        --quiet|-q)     QUIET=1 ;;
+        --help|-h)
+            sed -n '2,40p' "${BASH_SOURCE[0]}" | grep '^#' | sed 's/^# \?//'
+            exit 0 ;;
+        -*)
+            echo "Unknown option: $arg" >&2; exit 3 ;;
+        *)
+            ISO_PATH="$arg" ;;
+    esac
+done
+
+# Auto-detect latest ISO in dist/
+if [[ -z "$ISO_PATH" ]]; then
+    ISO_PATH=$(ls -t "${ROOT_DIR}/dist/"*.iso 2>/dev/null | head -1 || true)
+fi
+
+if [[ -z "$ISO_PATH" ]] || [[ ! -f "$ISO_PATH" ]]; then
+    echo >&2
+    echo "  Error: No ISO file specified or found in dist/." >&2
+    echo "  Usage: $0 [path/to/kairos.iso]" >&2
+    echo "  Build one with: ./scripts/build-iso" >&2
+    echo >&2
+    exit 2
+fi
+
+ISO_NAME="$(basename "$ISO_PATH")"
+DIST_DIR="${ROOT_DIR}/dist"
+BUILD_MANIFEST="${DIST_DIR}/build-manifest.json"
+SHA256FILE="${DIST_DIR}/SHA256SUMS"
+VERSION_FILE="${DIST_DIR}/version-metadata.json"
+PKG_MANIFEST="${DIST_DIR}/package-manifest.json"
+
+# =============================================================================
+# Terminal Colors
+# =============================================================================
+
+_USE_COLOR=0
+[[ -t 1 ]] && [[ $JSON_OUT -eq 0 ]] && _USE_COLOR=1
+
+_c()     { [[ $_USE_COLOR -eq 1 ]] && printf "\033[%sm" "$1" || true; }
+green()  { _c "32"; printf "%s" "$1"; _c "0"; }
+red()    { _c "31"; printf "%s" "$1"; _c "0"; }
+yellow() { _c "33"; printf "%s" "$1"; _c "0"; }
+cyan()   { _c "36"; printf "%s" "$1"; _c "0"; }
+bold()   { _c "1";  printf "%s" "$1"; _c "0"; }
+dim()    { _c "2";  printf "%s" "$1"; _c "0"; }
+
+# =============================================================================
+# Result Tracking
+# =============================================================================
+
+PASS=0
+FAIL=0
+WARN=0
+
+declare -a CHECK_NAMES=()
+declare -a CHECK_STATUS=()
+declare -a CHECK_MESSAGES=()
+
+_record() {
+    local status="$1" msg="$2"
+    CHECK_STATUS+=("$status")
+    CHECK_MESSAGES+=("$msg")
+}
+
+result_pass() {
+    PASS=$((PASS+1))
+    _record "PASS" "$1"
+    if [[ $QUIET -eq 0 ]]; then
+        printf "  "; green "[PASS]"; printf "  %s\n" "$1"
+    fi
+}
+result_fail() {
+    FAIL=$((FAIL+1))
+    _record "FAIL" "$1"
+    printf "  "; red   "[FAIL]"; printf "  %s\n" "$1"
+}
+result_warn() {
+    WARN=$((WARN+1))
+    _record "WARN" "$1"
+    if [[ $QUIET -eq 0 ]]; then
+        printf "  "; yellow "[WARN]"; printf "  %s\n" "$1"
+    fi
+}
+section() {
+    if [[ $QUIET -eq 0 ]]; then
+        echo
+        bold "  ── $1"
+        echo
+    fi
+}
+
+# =============================================================================
+# Banner
+# =============================================================================
+
+VERIFY_START="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+if [[ $QUIET -eq 0 ]] && [[ $JSON_OUT -eq 0 ]]; then
+    echo
+    bold "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    bold "  ◈  KAIROS OS ISO Verification"
+    echo "     ISO     : ${ISO_PATH}"
+    echo "     Date    : $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+    echo "     Strict  : $([ $STRICT -eq 1 ] && echo YES || echo NO)"
+    echo "     Mount   : $([ $NO_MOUNT -eq 1 ] && echo DISABLED || echo ENABLED)"
+    echo
+    bold "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+fi
+
+# =============================================================================
+# Check 1: ISO File Existence & Size
+# =============================================================================
+
+section "1. ISO File Existence"
+
+ISO_SIZE_BYTES=$(stat -c%s "$ISO_PATH" 2>/dev/null \
+              || stat -f%z "$ISO_PATH" 2>/dev/null \
+              || echo 0)
+ISO_SIZE_MIB=$(( ISO_SIZE_BYTES / 1024 / 1024 ))
+
+if [[ -f "$ISO_PATH" ]]; then
+    result_pass "ISO file exists: ${ISO_NAME} (${ISO_SIZE_MIB} MiB / ${ISO_SIZE_BYTES} bytes)"
+else
+    result_fail "ISO file not found: ${ISO_PATH}"
+    exit 2
+fi
+
+if [[ $ISO_SIZE_BYTES -lt 10240 ]]; then
+    result_warn "ISO is very small (<10 KiB) — may be placeholder or empty."
+elif [[ $ISO_SIZE_BYTES -lt 1048576 ]]; then
+    result_warn "ISO is under 1 MiB — expected a full OS image to be much larger."
+else
+    result_pass "ISO size is reasonable (${ISO_SIZE_MIB} MiB)"
+fi
+
+# =============================================================================
+# Check 2: SHA256 Checksum Integrity
+# =============================================================================
+
+section "2. SHA256 Checksum Integrity"
+
+COMPUTED_SHA256="$(sha256sum "$ISO_PATH" | awk '{print $1}')"
+if [[ $QUIET -eq 0 ]]; then
+    echo "     Computed : ${COMPUTED_SHA256}"
+fi
+
+if [[ -f "$SHA256FILE" ]]; then
+    EXPECTED_SHA256="$(grep -F "${ISO_NAME}" "$SHA256FILE" 2>/dev/null | awk '{print $1}' || true)"
+    if [[ -n "$EXPECTED_SHA256" ]]; then
+        if [[ $QUIET -eq 0 ]]; then
+            echo "     Expected : ${EXPECTED_SHA256}"
+        fi
+        if [[ "$COMPUTED_SHA256" == "$EXPECTED_SHA256" ]]; then
+            result_pass "SHA256 checksum matches."
+        elif [[ "$EXPECTED_SHA256" == DRY-RUN* ]]; then
+            result_warn "Build was a dry-run. SHA256 is a placeholder: ${EXPECTED_SHA256}"
+        else
+            result_fail "SHA256 MISMATCH — ISO may be corrupted or tampered with."
+        fi
+    else
+        result_warn "ISO name '${ISO_NAME}' not found in SHA256SUMS — cannot verify checksum."
+    fi
+else
+    result_warn "SHA256SUMS file not found: ${SHA256FILE}"
+fi
+
+# Also verify SquashFS checksum if dist copy exists
+if [[ -f "${DIST_DIR}/filesystem.sha256" ]]; then
+    # We can't verify it without mounting, but we can note it exists
+    result_pass "SquashFS SHA256 artifact present: dist/filesystem.sha256"
+fi
+
+# =============================================================================
+# Check 3: ISO Internal Structure (isoinfo + optional mount)
+# =============================================================================
+
+section "3. ISO Internal Structure"
+
+# isoinfo inspection (no root required)
+VOLID_DETECTED=""
+ISO_FILE_LIST=""
+HAS_ISOINFO=0
+
+if command -v isoinfo >/dev/null 2>&1; then
+    HAS_ISOINFO=1
+    VOLID_DETECTED="$(isoinfo -d -i "$ISO_PATH" 2>/dev/null \
+        | grep "Volume id:" | sed 's/Volume id:[[:space:]]*//' | tr -d '[:space:]' || true)"
+
+    if [[ -n "$VOLID_DETECTED" ]]; then
+        if [[ "$VOLID_DETECTED" == KAIROS_* ]]; then
+            result_pass "Volume ID is KAIROS-branded: ${VOLID_DETECTED}"
+        else
+            result_warn "Volume ID: '${VOLID_DETECTED}' — expected KAIROS_*"
+        fi
+    else
+        result_warn "Could not read Volume ID from ISO."
+    fi
+
+    ISO_FILE_LIST="$(isoinfo -l -i "$ISO_PATH" 2>/dev/null || true)"
+    if [[ -n "$ISO_FILE_LIST" ]]; then
+        FILE_COUNT=$(echo "$ISO_FILE_LIST" | grep -c "^\-" || echo 0)
+        result_pass "ISO file listing available (isoinfo): ${FILE_COUNT} files"
+    else
+        result_warn "isoinfo returned empty file listing."
+    fi
+else
+    result_warn "isoinfo (cdrtools) not installed. Install for Volume ID inspection."
+fi
+
+# Mount-based inspection
+MOUNTPOINT=""
+MOUNTED=0
+
+_cleanup_mount() {
+    if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+        umount "$MOUNTPOINT" 2>/dev/null || true
+        MOUNTED=0
+    fi
+    [[ -n "${MOUNTPOINT:-}" ]] && rmdir "$MOUNTPOINT" 2>/dev/null || true
+}
+trap _cleanup_mount EXIT
+
+if [[ $NO_MOUNT -eq 0 ]] && [[ "$(uname -s 2>/dev/null || true)" == "Linux" ]]; then
+    MOUNTPOINT="$(mktemp -d)"
+
+    if mount -o loop,ro "$ISO_PATH" "$MOUNTPOINT" 2>/dev/null; then
+        MOUNTED=1
+        result_pass "ISO mounted successfully for inspection."
+    elif fuseiso "$ISO_PATH" "$MOUNTPOINT" 2>/dev/null; then
+        MOUNTED=1
+        result_pass "ISO mounted via fuseiso."
+    else
+        result_warn "Could not mount ISO (requires root or fuseiso). File-level checks will use isoinfo."
+        rmdir "$MOUNTPOINT" 2>/dev/null || true
+        MOUNTPOINT=""
+    fi
+fi
+
+# =============================================================================
+# Check 4: Required Files Presence
+# =============================================================================
+
+section "4. Required Files Presence"
+
+# Mandatory files: must be present
+MANDATORY_FILES=(
+    "live/filesystem.squashfs"
+    "live/filesystem.sha256"
+    "boot/vmlinuz-kairos"
+    "boot/initramfs-kairos.img"
+    "boot/grub/grub.cfg"
+    "EFI/BOOT/BOOTX64.EFI"
+    "kairos/version.json"
+    "kairos/installer.py"
+    "kairos/package-manifest.json"
+    "recovery/recovery.py"
+    "recovery/recovery.json"
+)
+
+# Recommended files: warn if missing
+RECOMMENDED_FILES=(
+    "boot/initramfs-kairos-fallback.img"
+    "kairos/build-info.json"
+    "kairos/INSTALLER-README.md"
+    "recovery/README.md"
+)
+
+_check_file() {
+    local rel_path="$1"
+    local mandatory="${2:-1}"
+
+    if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+        local full_path="${MOUNTPOINT}/${rel_path}"
+        if [[ -f "$full_path" ]]; then
+            local sz; sz=$(stat -c%s "$full_path" 2>/dev/null || echo 0)
+            if [[ $sz -gt 0 ]]; then
+                result_pass "${rel_path} (${sz} bytes)"
+                return 0
+            else
+                result_warn "${rel_path} — exists but is EMPTY (0 bytes)"
+                return 1
+            fi
+        else
+            if [[ $mandatory -eq 1 ]]; then
+                result_fail "${rel_path} — MISSING from ISO"
+            else
+                result_warn "${rel_path} — not present (recommended)"
+            fi
+            return 1
+        fi
+    elif [[ $HAS_ISOINFO -eq 1 ]] && [[ -n "$ISO_FILE_LIST" ]]; then
+        local basename_lower; basename_lower=$(basename "$rel_path" | tr '[:upper:]' '[:lower:]')
+        if echo "$ISO_FILE_LIST" | grep -qi "$basename_lower"; then
+            result_pass "${rel_path} (detected via isoinfo)"
+            return 0
+        else
+            result_warn "${rel_path} — could not confirm presence (isoinfo limited)"
+            return 1
+        fi
+    else
+        result_warn "${rel_path} — cannot verify (ISO not mounted, no isoinfo)"
+        return 1
+    fi
+}
+
+echo "  Mandatory files:"
+for f in "${MANDATORY_FILES[@]}"; do
+    _check_file "$f" 1
+done
+
+echo
+echo "  Recommended files:"
+for f in "${RECOMMENDED_FILES[@]}"; do
+    _check_file "$f" 0
+done
+
+# =============================================================================
+# Check 5: Bootloader Configuration
+# =============================================================================
+
+section "5. Bootloader Configuration"
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    GRUB_CFG="${MOUNTPOINT}/boot/grub/grub.cfg"
+    if [[ -f "$GRUB_CFG" ]]; then
+        result_pass "GRUB2 configuration present."
+
+        # Verify required kernel entries and parameters
+        GRUB_CHECKS=(
+            "vmlinuz-kairos:Kernel image referenced"
+            "initramfs-kairos.img:Initramfs referenced"
+            "kairos.mode=live:Live mode entry"
+            "kairos.mode=installer:Installer mode entry"
+            "kairos.mode=recovery:Recovery mode entry"
+            "menuentry:At least one boot entry"
+        )
+        for check in "${GRUB_CHECKS[@]}"; do
+            pattern="${check%%:*}"
+            label="${check##*:}"
+            if grep -q "$pattern" "$GRUB_CFG"; then
+                result_pass "GRUB: ${label} (${pattern})"
+            else
+                result_warn "GRUB missing: ${label} — expected pattern '${pattern}'"
+            fi
+        done
+
+        # Count menuentry blocks
+        MENU_COUNT=$(grep -c "^menuentry" "$GRUB_CFG" 2>/dev/null || echo 0)
+        if [[ $MENU_COUNT -ge 3 ]]; then
+            result_pass "GRUB has ${MENU_COUNT} boot entries (≥3 required)"
+        else
+            result_warn "GRUB has only ${MENU_COUNT} boot entries (expected ≥3)"
+        fi
+    else
+        result_fail "GRUB2 configuration not found: boot/grub/grub.cfg"
+    fi
+
+    # EFI binary check
+    EFI_BIN="${MOUNTPOINT}/EFI/BOOT/BOOTX64.EFI"
+    if [[ -f "$EFI_BIN" ]]; then
+        EFI_SIZE=$(stat -c%s "$EFI_BIN" 2>/dev/null || echo 0)
+        if [[ $EFI_SIZE -gt 1024 ]]; then
+            result_pass "UEFI EFI binary present (${EFI_SIZE} bytes)"
+        else
+            result_warn "EFI/BOOT/BOOTX64.EFI exists but is small (${EFI_SIZE} bytes) — may be placeholder"
+        fi
+    else
+        result_fail "EFI/BOOT/BOOTX64.EFI not found — UEFI boot will fail"
+    fi
+else
+    result_warn "Cannot verify bootloader (ISO not mounted). Install fuseiso or run as root."
+fi
+
+# =============================================================================
+# Check 6: SquashFS Integrity
+# =============================================================================
+
+section "6. SquashFS Integrity"
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    SQUASH="${MOUNTPOINT}/live/filesystem.squashfs"
+    SQUASH_SUM="${MOUNTPOINT}/live/filesystem.sha256"
+
+    if [[ -f "$SQUASH" ]]; then
+        SQUASH_SIZE=$(stat -c%s "$SQUASH" 2>/dev/null || echo 0)
+        result_pass "SquashFS present (${SQUASH_SIZE} bytes)"
+
+        if [[ -f "$SQUASH_SUM" ]]; then
+            EXPECTED_SQUASH_SHA256="$(awk '{print $1}' < "$SQUASH_SUM")"
+            COMPUTED_SQUASH_SHA256="$(sha256sum "$SQUASH" | awk '{print $1}')"
+            if [[ "$EXPECTED_SQUASH_SHA256" == "$COMPUTED_SQUASH_SHA256" ]]; then
+                result_pass "SquashFS SHA256 integrity verified."
+            else
+                result_fail "SquashFS SHA256 MISMATCH — rootfs may be corrupted."
+            fi
+        else
+            result_warn "filesystem.sha256 not present in ISO — cannot verify SquashFS integrity."
+        fi
+
+        # Try unsquashfs -s for SquashFS metadata
+        if command -v unsquashfs >/dev/null 2>&1; then
+            SQUASH_INFO="$(unsquashfs -s "$SQUASH" 2>/dev/null || true)"
+            if [[ -n "$SQUASH_INFO" ]]; then
+                INODES=$(echo "$SQUASH_INFO" | grep -i "inodes" | head -1 | tr -d ' \t' || true)
+                result_pass "SquashFS metadata readable (${INODES:-valid})"
+            else
+                result_warn "unsquashfs -s returned nothing — SquashFS may be empty placeholder."
+            fi
+        fi
+    else
+        result_fail "live/filesystem.squashfs MISSING from ISO."
+    fi
+else
+    result_warn "Cannot verify SquashFS (ISO not mounted)."
+fi
+
+# =============================================================================
+# Check 7: Installer Integrity
+# =============================================================================
+
+section "7. Installer"
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    INSTALLER="${MOUNTPOINT}/kairos/installer.py"
+    if [[ -f "$INSTALLER" ]]; then
+        INS_SIZE=$(stat -c%s "$INSTALLER" 2>/dev/null || echo 0)
+        result_pass "Installer embedded (${INS_SIZE} bytes)"
+
+        # Minimum expected size (a real installer should be >10KB)
+        if [[ $INS_SIZE -lt 10240 ]]; then
+            result_warn "Installer seems small (${INS_SIZE} bytes < 10 KiB) — may be incomplete."
+        fi
+
+        # Python syntax check
+        if python3 -m py_compile "$INSTALLER" 2>/dev/null; then
+            result_pass "Installer: Python syntax valid."
+        else
+            result_fail "Installer: Python syntax error detected."
+        fi
+
+        # Verify key installer invariants are present
+        for pattern in \
+            "confirm_destructive\|YES, DESTROY DATA" \
+            "phase_health_check" \
+            "InstallState" \
+            "dry_run\|DRY.RUN\|--dry-run"; do
+            if grep -qE "$pattern" "$INSTALLER"; then
+                result_pass "Installer contains: ${pattern//\\|/ or }"
+            else
+                result_warn "Installer missing expected pattern: ${pattern//\\|/ or }"
+            fi
+        done
+    else
+        result_fail "kairos/installer.py not found in ISO."
+    fi
+else
+    result_warn "Cannot verify installer (ISO not mounted)."
+fi
+
+# =============================================================================
+# Check 8: Recovery Environment Integrity
+# =============================================================================
+
+section "8. Recovery Environment"
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    RECOVERY="${MOUNTPOINT}/recovery/recovery.py"
+    if [[ -f "$RECOVERY" ]]; then
+        REC_SIZE=$(stat -c%s "$RECOVERY" 2>/dev/null || echo 0)
+        result_pass "Recovery script embedded (${REC_SIZE} bytes)"
+
+        if python3 -m py_compile "$RECOVERY" 2>/dev/null; then
+            result_pass "Recovery: Python syntax valid."
+        else
+            result_fail "Recovery: Python syntax error detected."
+        fi
+
+        # Verify key recovery functions
+        for pattern in "recovery_menu\|RecoveryMenu" "repair\|rollback\|filesystem"; do
+            if grep -qiE "$pattern" "$RECOVERY"; then
+                result_pass "Recovery contains: ${pattern//\\|/ or }"
+            else
+                result_warn "Recovery missing expected feature: ${pattern//\\|/ or }"
+            fi
+        done
+    else
+        result_fail "recovery/recovery.py not found in ISO."
+    fi
+
+    RECOVERY_JSON="${MOUNTPOINT}/recovery/recovery.json"
+    if [[ -f "$RECOVERY_JSON" ]]; then
+        if python3 -c "import json; json.load(open('${RECOVERY_JSON}'))" 2>/dev/null; then
+            result_pass "recovery.json: valid JSON."
+        else
+            result_fail "recovery.json: invalid JSON."
+        fi
+    else
+        result_warn "recovery/recovery.json not found."
+    fi
+else
+    result_warn "Cannot verify recovery environment (ISO not mounted)."
+fi
+
+# =============================================================================
+# Check 9: Version Metadata Consistency
+# =============================================================================
+
+section "9. Version Metadata Consistency"
+
+ISO_VERSION=""
+ISO_CODENAME=""
+ISO_EPOCH=""
+ISO_COMMIT=""
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    VERSION_JSON="${MOUNTPOINT}/kairos/version.json"
+    if [[ -f "$VERSION_JSON" ]]; then
+        if python3 -c "import json; json.load(open('${VERSION_JSON}'))" 2>/dev/null; then
+            result_pass "kairos/version.json: valid JSON."
+        else
+            result_fail "kairos/version.json: invalid JSON."
+        fi
+
+        ISO_VERSION="$(python3 -c "
+import json
+d = json.load(open('${VERSION_JSON}'))
+print(d.get('version',''))
+" 2>/dev/null || true)"
+
+        ISO_CODENAME="$(python3 -c "
+import json
+d = json.load(open('${VERSION_JSON}'))
+print(d.get('codename',''))
+" 2>/dev/null || true)"
+
+        ISO_EPOCH="$(python3 -c "
+import json
+d = json.load(open('${VERSION_JSON}'))
+print(d.get('source_date_epoch',''))
+" 2>/dev/null || true)"
+
+        ISO_COMMIT="$(python3 -c "
+import json
+d = json.load(open('${VERSION_JSON}'))
+print(d.get('git_commit',''))
+" 2>/dev/null || true)"
+
+        result_pass "ISO version: ${ISO_VERSION} '${ISO_CODENAME}' (epoch=${ISO_EPOCH} commit=${ISO_COMMIT})"
+
+        # Cross-check with build-info.json for reproducibility metadata
+        BUILD_INFO_JSON="${MOUNTPOINT}/kairos/build-info.json"
+        if [[ -f "$BUILD_INFO_JSON" ]]; then
+            result_pass "kairos/build-info.json present (reproducibility record)."
+            BI_EPOCH="$(python3 -c "
+import json
+d = json.load(open('${BUILD_INFO_JSON}'))
+print(d.get('source_date_epoch',''))
+" 2>/dev/null || true)"
+            if [[ "$BI_EPOCH" == "$ISO_EPOCH" ]]; then
+                result_pass "SOURCE_DATE_EPOCH consistent: ${ISO_EPOCH}"
+            else
+                result_warn "SOURCE_DATE_EPOCH mismatch: version.json=${ISO_EPOCH}, build-info.json=${BI_EPOCH}"
+            fi
+        else
+            result_warn "kairos/build-info.json not present (reproducibility record missing)."
+        fi
+    else
+        result_warn "kairos/version.json not found in ISO."
+    fi
+fi
+
+# Cross-check with dist/version-metadata.json
+if [[ -f "$VERSION_FILE" ]]; then
+    if python3 -c "import json; json.load(open('${VERSION_FILE}'))" 2>/dev/null; then
+        result_pass "dist/version-metadata.json: valid JSON."
+        DIST_VERSION="$(python3 -c "
+import json
+d = json.load(open('${VERSION_FILE}'))
+print(d.get('version',''))
+" 2>/dev/null || true)"
+
+        if [[ -n "$ISO_VERSION" ]] && [[ -n "$DIST_VERSION" ]]; then
+            if [[ "$ISO_VERSION" == "$DIST_VERSION" ]]; then
+                result_pass "Version consistent: ISO=${ISO_VERSION} = dist=${DIST_VERSION}"
+            else
+                result_fail "Version MISMATCH: ISO=${ISO_VERSION} ≠ dist=${DIST_VERSION}"
+            fi
+        elif [[ -n "$DIST_VERSION" ]]; then
+            result_warn "dist version: ${DIST_VERSION} (could not read from ISO directly)"
+        fi
+    else
+        result_fail "dist/version-metadata.json: invalid JSON."
+    fi
+else
+    result_warn "dist/version-metadata.json not found."
+fi
+
+# =============================================================================
+# Check 10: Build Manifest
+# =============================================================================
+
+section "10. Build Manifest"
+
+if [[ -f "$BUILD_MANIFEST" ]]; then
+    result_pass "dist/build-manifest.json exists."
+
+    if python3 -c "import json; json.load(open('${BUILD_MANIFEST}'))" 2>/dev/null; then
+        result_pass "Build manifest: valid JSON."
+    else
+        result_fail "Build manifest: invalid JSON."
+    fi
+
+    # Verify required keys
+    python3 - << PYEOF
+import json, sys
+try:
+    d = json.load(open('${BUILD_MANIFEST}'))
+    required_keys = ['iso', 'version', 'components', 'required_files', 'reproducibility']
+    missing = [k for k in required_keys if k not in d]
+    if missing:
+        print(f"  [WARN] Build manifest missing keys: {missing}")
+        sys.exit(1)
+    else:
+        print(f"  [OK  ] Build manifest has all required keys.")
+    # Verify SHA256 in manifest matches computed
+    manifest_sha = d.get('iso', {}).get('sha256', '')
+    if manifest_sha and not manifest_sha.startswith('DRY-RUN'):
+        computed = '${COMPUTED_SHA256}'
+        if manifest_sha == computed:
+            print(f"  [OK  ] Build manifest SHA256 matches computed hash.")
+        else:
+            print(f"  [FAIL] Build manifest SHA256 mismatch: manifest={manifest_sha[:16]}..., computed={computed[:16]}...")
+            sys.exit(2)
+except Exception as e:
+    print(f"  [ERR ] {e}")
+    sys.exit(1)
+PYEOF
+    PYEOF_EXIT=$?
+    if [[ $PYEOF_EXIT -eq 0 ]]; then
+        result_pass "Build manifest structure verified."
+    elif [[ $PYEOF_EXIT -eq 1 ]]; then
+        result_warn "Build manifest structure issues (see above)."
+    else
+        result_fail "Build manifest SHA256 mismatch."
+    fi
+else
+    result_warn "dist/build-manifest.json not found."
+fi
+
+# =============================================================================
+# Check 11: Package Manifest
+# =============================================================================
+
+section "11. Package Manifest"
+
+_check_pkg_manifest() {
+    local path="$1" label="$2"
+    if [[ -f "$path" ]]; then
+        result_pass "${label} exists."
+        if python3 -c "import json; json.load(open('${path}'))" 2>/dev/null; then
+            result_pass "${label}: valid JSON."
+            PKG_COUNT=$(python3 -c "
+import json
+d = json.load(open('${path}'))
+print(d.get('count', len(d.get('packages', []))))
+" 2>/dev/null || echo "unknown")
+            if [[ "$PKG_COUNT" == "unknown" ]] || [[ "$PKG_COUNT" -eq 0 ]] 2>/dev/null; then
+                result_warn "${label}: package list is empty."
+            else
+                result_pass "${label}: ${PKG_COUNT} packages listed."
+            fi
+        else
+            result_fail "${label}: invalid JSON."
+        fi
+    fi
+}
+
+_check_pkg_manifest "$PKG_MANIFEST" "dist/package-manifest.json"
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    ISO_PKG="${MOUNTPOINT}/kairos/package-manifest.json"
+    _check_pkg_manifest "$ISO_PKG" "kairos/package-manifest.json (in ISO)"
+fi
+
+if [[ ! -f "$PKG_MANIFEST" ]]; then
+    if [[ $MOUNTED -ne 1 ]]; then
+        result_warn "Package manifest not verifiable (ISO not mounted, dist/ copy absent)."
+    fi
+fi
+
+# =============================================================================
+# Check 12: Reproducibility Metadata
+# =============================================================================
+
+section "12. Reproducibility"
+
+_check_reproducibility() {
+    local vf="$1" label="$2"
+    if [[ -f "$vf" ]]; then
+        EPOCH="$(python3 -c "
+import json
+d = json.load(open('${vf}'))
+print(d.get('source_date_epoch', ''))
+" 2>/dev/null || true)"
+        if [[ -n "$EPOCH" ]] && [[ "$EPOCH" -gt 0 ]] 2>/dev/null; then
+            EPOCH_DATE="$(date -u -d "@${EPOCH}" +"%Y-%m-%d" 2>/dev/null \
+                       || date -u -r  "${EPOCH}"  +"%Y-%m-%d" 2>/dev/null \
+                       || echo "?")"
+            result_pass "${label}: SOURCE_DATE_EPOCH=${EPOCH} (${EPOCH_DATE})"
+        else
+            result_warn "${label}: SOURCE_DATE_EPOCH missing or zero — not reproducible."
+        fi
+    fi
+}
+
+_check_reproducibility "${DIST_DIR}/version-metadata.json" "version-metadata.json"
+[[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]] && \
+    _check_reproducibility "${MOUNTPOINT}/kairos/version.json" "kairos/version.json (ISO)"
+
+if [[ -f "${DIST_DIR}/build-manifest.json" ]]; then
+    REPRO_NOTE="$(python3 -c "
+import json
+d = json.load(open('${DIST_DIR}/build-manifest.json'))
+print(d.get('reproducibility', {}).get('notes', ''))
+" 2>/dev/null || true)"
+    [[ -n "$REPRO_NOTE" ]] && result_pass "Reproducibility instructions embedded in build manifest."
+fi
+
+# =============================================================================
+# Unmount
+# =============================================================================
+
+if [[ $MOUNTED -eq 1 ]] && [[ -n "${MOUNTPOINT:-}" ]]; then
+    umount "$MOUNTPOINT" 2>/dev/null || true
+    MOUNTED=0
+    rmdir "$MOUNTPOINT" 2>/dev/null || true
+    MOUNTPOINT=""
+fi
+
+# =============================================================================
+# Summary
+# =============================================================================
+
+VERIFY_END="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+# Apply strict mode: all warns become fails
+if [[ $STRICT -eq 1 ]]; then
+    if [[ $WARN -gt 0 ]]; then
+        FAIL=$((FAIL+WARN))
+        WARN=0
+    fi
+fi
+
+if [[ $JSON_OUT -eq 1 ]]; then
+    # Machine-readable JSON summary
+    python3 - << PYEOF
+import json, sys
+checks = []
+statuses = """${CHECK_STATUS[*]:-}""".split()
+messages = """${CHECK_MESSAGES[*]:-}""".split("\n")
+for i, (s, m) in enumerate(zip(statuses, messages)):
+    checks.append({"index": i+1, "status": s.strip(), "message": m.strip()})
+
+result = {
+    "iso": "${ISO_PATH}",
+    "iso_name": "${ISO_NAME}",
+    "sha256": "${COMPUTED_SHA256}",
+    "iso_size_bytes": int("${ISO_SIZE_BYTES}"),
+    "verified_at": "${VERIFY_END}",
+    "strict_mode": bool(int("${STRICT}")),
+    "mounted": bool(int("${MOUNTED:-0}")),
+    "pass": int("${PASS}"),
+    "warn": int("${WARN}"),
+    "fail": int("${FAIL}"),
+    "overall": "PASS" if int("${FAIL}") == 0 else "FAIL",
+    "checks": checks,
+}
+print(json.dumps(result, indent=2))
+sys.exit(0 if int("${FAIL}") == 0 else 1)
+PYEOF
+    exit $?
+fi
+
+# Human-readable summary
+echo
+bold "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+bold "  Verification Summary:"
+echo
+printf "    "; green   "PASSED  : ${PASS}"; echo
+printf "    "; yellow  "WARNED  : ${WARN}"; echo
+printf "    "; red     "FAILED  : ${FAIL}"; echo
+echo
+
+if [[ $FAIL -gt 0 ]]; then
+    red "  ✗  VERIFICATION FAILED — ${FAIL} critical check(s) failed."
+    echo
+    echo "     This ISO may not boot correctly or may be missing required components."
+    echo "     Review the FAILed items above and rebuild with ./scripts/build-iso."
+    echo
+    exit 1
+elif [[ $WARN -gt 0 ]]; then
+    yellow "  ⚠  VERIFICATION PASSED WITH WARNINGS — ${WARN} advisory item(s)."
+    echo
+    echo "     The ISO appears functional but some checks could not be completed."
+    if [[ $MOUNTED -eq 0 ]]; then
+        echo "     Run as root (or install fuseiso) for full file-level verification."
+    fi
+    echo
+    exit 0
+else
+    green "  ✓  ALL CHECKS PASSED — ISO is verified and ready."
+    echo
+    echo "     SHA256  : ${COMPUTED_SHA256}"
+    [[ -n "$ISO_VERSION" ]] && echo "     Version : ${ISO_VERSION} '${ISO_CODENAME}'"
+    [[ -n "$ISO_EPOCH"   ]] && echo "     Epoch   : ${ISO_EPOCH}"
+    [[ -n "$ISO_COMMIT"  ]] && echo "     Commit  : ${ISO_COMMIT}"
+    echo
+    echo "     Boot VM:  ./scripts/run-vm ${ISO_PATH}"
+    echo
+    exit 0
+fi

@@ -1,0 +1,25 @@
+[Unit]
+Description=KAIROS Market Data Feed Ingestion Service
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+After=network-online.target kairos-sysd.service
+Wants=network-online.target
+PartOf=kairos-trading.target
+
+[Service]
+Type=simple
+User=kairos-feed
+Group=trading
+ExecStart=/usr/bin/python3 /usr/libexec/kairos/kairos-feedd.py
+Restart=always
+RestartSec=2s
+# Resource Limits & Isolation: Memory clamp and restricted privileges
+MemoryMax=1G
+CPUQuota=100%
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+RuntimeDirectory=kairos
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

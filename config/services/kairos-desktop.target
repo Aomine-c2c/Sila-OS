@@ -1,0 +1,8 @@
+[Unit]
+Description=KAIROS Desktop Environment & Wayland Session Services Target
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+Wants=greetd.service
+After=kairos-system.target
+
+[Install]
+WantedBy=graphical.target

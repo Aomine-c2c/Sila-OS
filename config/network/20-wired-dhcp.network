@@ -1,0 +1,21 @@
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+IPv6PrivacyExtensions=kernel
+LinkLocalAddressing=ipv6
+Multicast=yes
+
+[DHCPv4]
+RouteMetric=100
+UseMTU=true
+UseDNS=true
+UseNTP=true
+ClientIdentifier=mac
+Anonymize=no
+
+[DHCPv6]
+RouteMetric=100
+UseDNS=true
+UseNTP=true

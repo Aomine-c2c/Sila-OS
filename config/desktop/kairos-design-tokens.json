@@ -1,0 +1,209 @@
+{
+  "meta": {
+    "name": "KAIROS Design System Tokens",
+    "version": "1.0.0",
+    "philosophy": [
+      "minimal",
+      "technical",
+      "calm",
+      "professional",
+      "information-dense",
+      "precise",
+      "restrained",
+      "fast"
+    ],
+    "default_mode": "light",
+    "supported_modes": ["light", "dark"]
+  },
+  "typography": {
+    "font_family_monospace": "'JetBrains Mono', 'Roboto Mono', 'SF Mono', 'Menlo', monospace",
+    "font_family_sans": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+    "sizes": {
+      "xs": "11px",
+      "sm": "12px",
+      "base": "13px",
+      "md": "14px",
+      "lg": "16px",
+      "xl": "18px",
+      "2xl": "24px"
+    },
+    "weights": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    },
+    "line_heights": {
+      "dense": 1.2,
+      "normal": 1.4,
+      "relaxed": 1.6
+    }
+  },
+  "spacing": {
+    "none": "0px",
+    "2xs": "2px",
+    "xs": "4px",
+    "sm": "6px",
+    "md": "8px",
+    "lg": "12px",
+    "xl": "16px",
+    "2xl": "24px",
+    "3xl": "32px"
+  },
+  "borders": {
+    "radius": {
+      "none": "0px",
+      "sharp": "2px",
+      "standard": "4px",
+      "pill": "9999px"
+    },
+    "widths": {
+      "hairline": "1px",
+      "focus": "2px"
+    }
+  },
+  "elevation": {
+    "light": {
+      "none": "none",
+      "low": "0 1px 2px rgba(15, 23, 42, 0.05)",
+      "medium": "0 2px 4px rgba(15, 23, 42, 0.08)",
+      "popover": "0 4px 12px rgba(15, 23, 42, 0.12)"
+    },
+    "dark": {
+      "none": "none",
+      "low": "0 1px 2px rgba(0, 0, 0, 0.3)",
+      "medium": "0 2px 6px rgba(0, 0, 0, 0.45)",
+      "popover": "0 4px 16px rgba(0, 0, 0, 0.6)"
+    }
+  },
+  "color": {
+    "light": {
+      "surface_base": "#f8fafc",
+      "surface_panel": "#ffffff",
+      "surface_elevated": "#f1f5f9",
+      "surface_sunken": "#e2e8f0",
+      "border_subtle": "#cbd5e1",
+      "border_default": "#94a3b8",
+      "border_focus": "#0284c7",
+      "text_primary": "#0f172a",
+      "text_secondary": "#475569",
+      "text_muted": "#64748b",
+      "text_inverse": "#ffffff",
+      "interactive_hover": "#f1f5f9",
+      "interactive_active": "#e2e8f0",
+      "interactive_selected": "#e0f2fe",
+      "interactive_accent": "#0284c7"
+    },
+    "dark": {
+      "surface_base": "#0a0c10",
+      "surface_panel": "#11141b",
+      "surface_elevated": "#181c26",
+      "surface_sunken": "#06080a",
+      "border_subtle": "#1e2330",
+      "border_default": "#333b4f",
+      "border_focus": "#00f0ff",
+      "text_primary": "#f1f5f9",
+      "text_secondary": "#94a3b8",
+      "text_muted": "#64748b",
+      "text_inverse": "#0f172a",
+      "interactive_hover": "#181c26",
+      "interactive_active": "#222736",
+      "interactive_selected": "rgba(0, 240, 255, 0.12)",
+      "interactive_accent": "#00f0ff"
+    }
+  },
+  "states": {
+    "light": {
+      "nominal": {
+        "text": "#059669",
+        "bg": "#ecfdf5",
+        "border": "#10b981",
+        "label": "NOMINAL / HEALTHY"
+      },
+      "warning": {
+        "text": "#d97706",
+        "bg": "#fffbeb",
+        "border": "#f59e0b",
+        "label": "WARNING / CAUTION"
+      },
+      "critical": {
+        "text": "#dc2626",
+        "bg": "#fef2f2",
+        "border": "#ef4444",
+        "label": "CRITICAL / RISK BREACH"
+      },
+      "info": {
+        "text": "#0284c7",
+        "bg": "#f0f9ff",
+        "border": "#38bdf8",
+        "label": "INFORMATIONAL"
+      }
+    },
+    "dark": {
+      "nominal": {
+        "text": "#00ff88",
+        "bg": "rgba(0, 255, 136, 0.12)",
+        "border": "#00ff88",
+        "label": "NOMINAL / HEALTHY"
+      },
+      "warning": {
+        "text": "#ffd700",
+        "bg": "rgba(255, 215, 0, 0.12)",
+        "border": "#ffd700",
+        "label": "WARNING / CAUTION"
+      },
+      "critical": {
+        "text": "#ff3366",
+        "bg": "rgba(255, 51, 102, 0.15)",
+        "border": "#ff3366",
+        "label": "CRITICAL / RISK BREACH"
+      },
+      "info": {
+        "text": "#00f0ff",
+        "bg": "rgba(0, 240, 255, 0.12)",
+        "border": "#00f0ff",
+        "label": "INFORMATIONAL"
+      }
+    }
+  },
+  "workspaces": {
+    "1": { "name": "Quant", "code": "QUANT", "color": "#0284c7" },
+    "2": { "name": "Market", "code": "MKT", "color": "#059669" },
+    "3": { "name": "Risk", "code": "RISK", "color": "#dc2626" },
+    "4": { "name": "Research", "code": "RES", "color": "#7c3aed" },
+    "5": { "name": "Comms", "code": "COMMS", "color": "#475569" }
+  },
+  "adaptive_ring": {
+    "stages": [
+      { "id": 1, "name": "OBSERVE", "angle_deg": 0, "description": "Continuous telemetry & latency capture" },
+      { "id": 2, "name": "DIAGNOSE", "angle_deg": 60, "description": "Deterministic anomaly & jitter isolation" },
+      { "id": 3, "name": "ADAPT", "angle_deg": 120, "description": "Safe runtime parameter tuning" },
+      { "id": 4, "name": "VALIDATE", "angle_deg": 180, "description": "RiskGatekeeper & invariant verification" },
+      { "id": 5, "name": "DEPLOY", "angle_deg": 240, "description": "Atomic kernel/heuristic application" },
+      { "id": 6, "name": "LEARN", "angle_deg": 300, "description": "State retention & model convergence" }
+    ],
+    "states": {
+      "IDLE": { "color_light": "#64748b", "color_dark": "#7b8496", "activity": "quiescent", "description": "Stationary calibration baseline" },
+      "OBSERVING": { "color_light": "#0284c7", "color_dark": "#00f0ff", "activity": "sampling", "description": "Ingesting telemetry feeds" },
+      "DIAGNOSING": { "color_light": "#059669", "color_dark": "#00ff88", "activity": "analyzing", "description": "Detecting anomalies & drift" },
+      "TESTING": { "color_light": "#d97706", "color_dark": "#ffd700", "activity": "stressing", "description": "Simulating candidates" },
+      "VALIDATING": { "color_light": "#7c3aed", "color_dark": "#c084fc", "activity": "gating", "description": "Evaluating security invariants" },
+      "EVOLUTION_COMPLETE": { "color_light": "#059669", "color_dark": "#00ff88", "activity": "evolved", "description": "Validated candidate accepted" },
+      "ROLLBACK": { "color_light": "#dc2626", "color_dark": "#ff3366", "activity": "reverting", "description": "Atomic baseline restored" },
+      "HALTED": { "color_light": "#dc2626", "color_dark": "#ff3366", "activity": "locked", "description": "Circuit breaker engaged" }
+    },
+    "mechanics": {
+      "continuous_spinning": false,
+      "rotation_type": "escapement_stepped",
+      "step_angle_deg": 60,
+      "step_duration_ms": 350,
+      "easing_curve": "cubic-bezier(0.25, 1, 0.5, 1)",
+      "stipple_lattice": {
+        "frequency_hz": 24,
+        "base_opacity": 0.08,
+        "pulse_opacity": 0.22,
+        "settle_duration_ms": 400
+      }
+    }
+  }
+}

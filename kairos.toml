@@ -1,0 +1,85 @@
+# KAIROS OS Manifest (kairos.toml)
+# Foundational Operating System Specification & Repository Metadata
+
+[project]
+name = "kairos-os"
+display_name = "KAIROS OS"
+tagline = "Purpose-built Linux Operating System for Quantitative Researchers and Algorithmic Operators"
+version = "0.1.0-alpha.1"
+release_codename = "Aethelgard"
+edition = "Quant / Financial Engineering Workstation"
+homepage = "https://kairos-os.org"
+repository = "https://github.com/kairos-os/kairos"
+license = "Apache-2.0"
+maintainer = "KAIROS Core Systems Team <architect@kairos-os.org>"
+
+[architecture]
+target_arch = "x86_64"
+subtarget = "x86-64-v3"
+preemption_model = "PREEMPT_RT"
+init_system = "systemd"
+display_server = "Wayland"
+compositor = "Hyprland"
+shell = "kairos-shell"
+
+[versioning]
+epoch = 1
+major = 0
+minor = 1
+patch = 0
+pre_release = "alpha.1"
+schema_version = "1.0.0"
+
+[invariants]
+hard_risk_gatekeeper = true
+independent_os_stability = true
+audit_isolation = true
+unbypassable_pipeline = "Signal -> Decision -> Risk -> Execution -> Broker"
+
+[directories]
+boot = "/boot"
+build = "/build"
+config = "/config"
+docs = "/docs"
+kernel = "/kernel"
+iso = "/iso"
+packages = "/packages"
+system = "/system"
+services = "/services"
+desktop = "/desktop"
+shell = "/shell"
+apps = "/apps"
+plugins = "/plugins"
+trading = "/trading"
+research = "/research"
+agents = "/agents"
+adaptive = "/adaptive"
+security = "/security"
+scripts = "/scripts"
+tests = "/tests"
+tools = "/tools"
+recovery = "/recovery"
+installer = "/installer"
+assets = "/assets"
+
+[components.core]
+kernel_flavor = "linux-kairos-rt"
+kernel_version = "6.6.x-rt"
+libc = "glibc"
+rootfs_type = "btrfs-subvolumes"
+bootloader = "systemd-boot"
+bootloaders = ["systemd-boot", "grub", "limine"]
+
+[components.desktop]
+compositor = "hyprland"
+bar = "waybar"
+launcher = "wofi"
+terminal = "kitty"
+notifications = "mako"
+
+[components.trading]
+risk_daemon = "kairos-riskd"
+risk_ipc = "/run/kairos/risk.sock"
+market_cache_format = "parquet"
+compression = "zstd"
+default_risk_ceiling_pct = 0.03

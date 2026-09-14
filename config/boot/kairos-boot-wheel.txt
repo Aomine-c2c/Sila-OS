@@ -1,0 +1,9 @@
+             0° [OBSERVE]
+                  ││
+   300° [LEARN]  ╭──┼──╮  [DIAGNOSE] 60°
+                 │  │  │
+             ───┼──⎊──┼───   KAIROS ADAPTIVE RETICLE
+                 │  │  │
+   240° [DEPLOY] ╰──┼──╯  [ADAPT] 120°
+                  ││
+            180° [VALIDATE]

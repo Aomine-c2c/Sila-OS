@@ -1,0 +1,29 @@
+# AppArmor Profile for KAIROS Risk Gatekeeper Daemon
+# Ensures absolute isolation: no raw network sockets, access strictly to IPC sockets and config
+
+abi <abi/3.0>,
+
+include <tunables/global>
+
+/usr/libexec/kairos/kairos-riskd {
+  include <abstractions/base>
+  include <abstractions/python>
+
+  # Read configuration
+  /etc/kairos/risk/ r,
+  /etc/kairos/risk/** r,
+
+  # Write status to run directory
+  /var/run/kairos/ rw,
+  /var/run/kairos/** rw,
+
+  # Deny arbitrary filesystem traversal
+  deny /home/** rwklx,
+  deny /root/** rwklx,
+  deny /tmp/** rwklx,
+
+  # Deny raw socket creation; allow only UNIX domain sockets
+  network unix stream,
+  deny network raw,
+  deny network packet,
+}

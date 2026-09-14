@@ -1,0 +1,99 @@
+/* KAIROS Adaptive Wheel - Mechanical Escapement CSS
+   Strict Invariant: No continuous spinning.
+   Rotates exclusively during discrete adaptive stage transitions. */
+
+:root {
+  --wheel-step-duration: 350ms;
+  --wheel-easing: cubic-bezier(0.25, 1, 0.5, 1);
+  --wheel-stipple-pulse: 400ms;
+}
+
+/* Base Mechanical Caliper Dial Container */
+.kairos-adaptive-wheel {
+  display: inline-block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 480px;
+  max-height: 480px;
+  user-select: none;
+}
+
+/* Escapement Hand Stepped Rotation Targets (60° Increments) */
+.kairos-adaptive-wheel[data-sector="OBSERVE"] #adaptiveEscapementHand {
+  transform: rotate(0deg);
+  transform-origin: 256px 256px;
+  transition: transform var(--wheel-step-duration) var(--wheel-easing);
+}
+
+.kairos-adaptive-wheel[data-sector="DIAGNOSE"] #adaptiveEscapementHand {
+  transform: rotate(60deg);
+  transform-origin: 256px 256px;
+  transition: transform var(--wheel-step-duration) var(--wheel-easing);
+}
+
+.kairos-adaptive-wheel[data-sector="ADAPT"] #adaptiveEscapementHand {
+  transform: rotate(120deg);
+  transform-origin: 256px 256px;
+  transition: transform var(--wheel-step-duration) var(--wheel-easing);
+}
+
+.kairos-adaptive-wheel[data-sector="VALIDATE"] #adaptiveEscapementHand {
+  transform: rotate(180deg);
+  transform-origin: 256px 256px;
+  transition: transform var(--wheel-step-duration) var(--wheel-easing);
+}
+
+.kairos-adaptive-wheel[data-sector="DEPLOY"] #adaptiveEscapementHand {
+  transform: rotate(240deg);
+  transform-origin: 256px 256px;
+  transition: transform var(--wheel-step-duration) var(--wheel-easing);
+}
+
+.kairos-adaptive-wheel[data-sector="LEARN"] #adaptiveEscapementHand {
+  transform: rotate(300deg);
+  transform-origin: 256px 256px;
+  transition: transform var(--wheel-step-duration) var(--wheel-easing);
+}
+
+/* Subtle Stipple Lattice Response on Validation & Evolution Complete */
+@keyframes stippleSettle {
+  0% { opacity: 0.20; }
+  50% { opacity: 0.75; }
+  100% { opacity: 0.22; }
+}
+
+.kairos-adaptive-wheel[data-state="VALIDATING"] .stipple-zone,
+.kairos-adaptive-wheel[data-state="EVOLUTION_COMPLETE"] .stipple-zone {
+  animation: stippleSettle var(--wheel-stipple-pulse) ease-out forwards;
+}
+
+/* State Color Overrides */
+.kairos-adaptive-wheel[data-state="IDLE"] {
+  --kairos-accent: #64748b;
+}
+
+.kairos-adaptive-wheel[data-state="OBSERVING"] {
+  --kairos-accent: #0284c7;
+}
+
+.kairos-adaptive-wheel[data-state="DIAGNOSING"] {
+  --kairos-accent: #059669;
+}
+
+.kairos-adaptive-wheel[data-state="TESTING"] {
+  --kairos-accent: #d97706;
+}
+
+.kairos-adaptive-wheel[data-state="VALIDATING"] {
+  --kairos-accent: #7c3aed;
+}
+
+.kairos-adaptive-wheel[data-state="EVOLUTION_COMPLETE"] {
+  --kairos-accent: #059669;
+}
+
+.kairos-adaptive-wheel[data-state="ROLLBACK"],
+.kairos-adaptive-wheel[data-state="HALTED"] {
+  --kairos-accent: #dc2626;
+}

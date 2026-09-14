@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Subtle high-frequency stipple lattice grain -->
+    <pattern id="wheelStippleLattice" width="8" height="8" patternUnits="userSpaceOnUse">
+      <circle cx="4" cy="4" r="0.75" fill="currentColor" opacity="0.22" />
+    </pattern>
+
+    <style>
+      :root {
+        --kairos-accent: #0284c7;
+        --kairos-track: #475569;
+        --kairos-active: #059669;
+        --kairos-text: #0f172a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --kairos-accent: #00f0ff;
+          --kairos-track: #64748b;
+          --kairos-active: #00ff88;
+          --kairos-text: #f1f5f9;
+        }
+      }
+      .hairline-reticle { fill: none; stroke: currentColor; stroke-width: 1.25; opacity: 0.35; }
+      .caliper-outer-ring { fill: none; stroke: currentColor; stroke-width: 2.25; opacity: 0.75; }
+      .caliper-inner-ring { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-dasharray: 4 6; opacity: 0.45; }
+      .stipple-zone { fill: url(#wheelStippleLattice); opacity: 0.85; }
+      .stage-indexer { fill: var(--kairos-accent); stroke: currentColor; stroke-width: 1.5; }
+      .escapement-needle { stroke: var(--kairos-accent); stroke-width: 2.5; stroke-linecap: round; }
+      .vernier-tick { stroke: currentColor; stroke-width: 1; opacity: 0.4; }
+      .vernier-tick-major { stroke: currentColor; stroke-width: 2; opacity: 0.75; }
+      .stage-label {
+        font-family: 'JetBrains Mono', 'Roboto Mono', 'SF Mono', monospace;
+        font-size: 11px;
+        font-weight: 600;
+        fill: currentColor;
+        text-anchor: middle;
+        letter-spacing: 0.5px;
+      }
+      .center-core { fill: currentColor; }
+    </style>
+  </defs>
+
+  <!-- Outer Protective Vernier Scale & Hairline Crosshairs -->
+  <line x1="256" y1="16" x2="256" y2="496" class="hairline-reticle" />
+  <line x1="16" y1="256" x2="496" y2="256" class="hairline-reticle" />
+  <circle cx="256" cy="256" r="240" class="hairline-reticle" />
+
+  <!-- Perimeter Vernier Micrometer Ticks (Every 15°) -->
+  <!-- 0° -->   <line x1="256" y1="16" x2="256" y2="28" class="vernier-tick-major" />
+  <!-- 15° -->  <line x1="318" y1="24" x2="315" y2="35" class="vernier-tick" />
+  <!-- 30° -->  <line x1="376" y1="48" x2="370" y2="58" class="vernier-tick" />
+  <!-- 45° -->  <line x1="426" y1="86" x2="417" y2="95" class="vernier-tick" />
+  <!-- 60° -->  <line x1="464" y1="136" x2="453" y2="142" class="vernier-tick-major" />
+  <!-- 75° -->  <line x1="488" y1="194" x2="476" y2="197" class="vernier-tick" />
+  <!-- 90° -->  <line x1="496" y1="256" x2="484" y2="256" class="vernier-tick-major" />
+  <!-- 120° --> <line x1="464" y1="376" x2="453" y2="370" class="vernier-tick-major" />
+  <!-- 150° --> <line x1="376" y1="464" x2="370" y2="454" class="vernier-tick" />
+  <!-- 180° --> <line x1="256" y1="496" x2="256" y2="484" class="vernier-tick-major" />
+  <!-- 210° --> <line x1="136" y1="464" x2="142" y2="454" class="vernier-tick" />
+  <!-- 240° --> <line x1="48" y1="376" x2="59" y2="370" class="vernier-tick-major" />
+  <!-- 270° --> <line x1="16" y1="256" x2="28" y2="256" class="vernier-tick-major" />
+  <!-- 300° --> <line x1="48" y1="136" x2="59" y2="142" class="vernier-tick-major" />
+  <!-- 330° --> <line x1="136" y1="48" x2="142" y2="58" class="vernier-tick" />
+
+  <!-- Precision Stipple Lattice Band (Perimeter Response Zone) -->
+  <circle cx="256" cy="256" r="216" class="stipple-zone" />
+  <circle cx="256" cy="256" r="216" class="caliper-outer-ring" />
+  <circle cx="256" cy="256" r="168" class="caliper-inner-ring" />
+
+  <!-- 6 Sector Escapement Index Notches & Labels -->
+  <!-- 0°: OBSERVE -->
+  <circle cx="256" cy="40" r="5" class="stage-indexer" />
+  <text x="256" y="58" class="stage-label">OBSERVE</text>
+
+  <!-- 60°: DIAGNOSE -->
+  <circle cx="443" cy="148" r="5" class="stage-indexer" />
+  <text x="432" y="132" class="stage-label">DIAGNOSE</text>
+
+  <!-- 120°: ADAPT -->
+  <circle cx="443" cy="364" r="5" class="stage-indexer" />
+  <text x="432" y="388" class="stage-label">ADAPT</text>
+
+  <!-- 180°: VALIDATE -->
+  <circle cx="256" cy="472" r="5" class="stage-indexer" />
+  <text x="256" y="460" class="stage-label">VALIDATE</text>
+
+  <!-- 240°: DEPLOY -->
+  <circle cx="69" cy="364" r="5" class="stage-indexer" />
+  <text x="78" y="388" class="stage-label">DEPLOY</text>
+
+  <!-- 300°: LEARN -->
+  <circle cx="69" cy="148" r="5" class="stage-indexer" />
+  <text x="78" y="132" class="stage-label">LEARN</text>
+
+  <!-- Central Precision Caliper Hub & Escapement Axis -->
+  <circle cx="256" cy="256" r="54" class="hairline-reticle" />
+  <circle cx="256" cy="256" r="16" class="caliper-outer-ring" />
+  <circle cx="256" cy="256" r="4" class="center-core" />
+
+  <!-- Mechanical Pointer Hand (Stepped 60° Escapement Position) -->
+  <g id="adaptiveEscapementHand">
+    <line x1="256" y1="256" x2="256" y2="72" class="escapement-needle" />
+    <polygon points="256,46 250,68 262,68" fill="var(--kairos-accent)" />
+  </g>
+</svg>

@@ -1,0 +1,53 @@
+# KAIROS OS - Git Ignore Patterns
+# Build artifacts and generated files
+
+# Build directories
+/build/
+/out/
+/build/
+*.iso
+*.squashfs
+
+# Logs
+*.log
+/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build container artifacts
+*.tar.gz
+*.tar.xz
+*.zip
+/tools/limine/
+
+# Distribution
+*.deb
+*.rpm
+*.pkg
+
+# Testing
+.coverage
+htmlcov/
+.tox/
+
+# Virtual environments
+.venv/
+venv/
+env/

@@ -1,0 +1,29 @@
+# KAIROS Centralized Observability - Logrotate Configuration
+# Standard: Bounded storage, zero disk exhaustion, restricted permissions
+
+/var/log/kairos/*.log {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    maxsize 25M
+    create 0640 root wheel
+    sharedscripts
+    postrotate
+        # Signal services to re-open log files if running
+        pkill -HUP -f kairos-sysd.py 2>/dev/null || true
+    endscript
+}
+
+/var/log/audit/*.log {
+    daily
+    rotate 30
+    missingok
+    notifempty
+    compress
+    delaycompress
+    maxsize 50M
+    create 0600 root root
+}

@@ -1,0 +1,8 @@
+[Unit]
+Description=KAIROS Core Trading Subsystem Target
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+Wants=kairos-riskd.service kairos-feedd.service
+After=kairos-system.target network-online.target
+
+[Install]
+WantedBy=multi-user.target

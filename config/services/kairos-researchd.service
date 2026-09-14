@@ -1,0 +1,24 @@
+[Unit]
+Description=KAIROS Quantitative Research & Analytics Daemon
+Documentation=file:///usr/share/doc/kairos/service-architecture.md
+After=local-fs.target kairos-sysd.service
+PartOf=kairos-research.target
+
+[Service]
+Type=simple
+User=kairos
+Group=research
+ExecStart=/usr/bin/python3 /usr/libexec/kairos/kairos-researchd.py
+Restart=on-failure
+RestartSec=5s
+# Resource Limits & Isolation: Clamped priority so research never depresses trading engine
+Nice=10
+CPUSchedulingPolicy=other
+MemoryMax=4G
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/cache/kairos/market_data /run/kairos
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
